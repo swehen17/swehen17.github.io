@@ -9,6 +9,30 @@ output: html_document
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+```{r}
+install.packages("tidyverse")
+library(tidyverse)
+
+health_full <- read_csv("https://chronicdata.cdc.gov/api/views/swc5-untb/rows.csv?accessType=DOWNLOAD&bom=true&format=true")
+
+head(health_full)
+```
+
+```{r}
+write_csv(health_full, "health_full.csv")
+
+health_full_again <- read_csv("health_full.csv")
+
+rm(health_full_again)
+
+# comment comment
+```
+
+comment comment
+
+
+
+
 ## R Markdown
 
 This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
