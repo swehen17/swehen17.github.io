@@ -1,0 +1,198 @@
+---
+title: "HendricksonSwen_A1_take3"
+author: "Swen Hendrickson"
+date: "9/29/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# load libraries
+```{r}
+library(tidyverse)
+library(plotly)
+```
+
+
+# load data
+```{r}
+years <- 2017:2021
+quarters <- 1:4
+types <- c("Electric","Gas")
+
+pge_data_raw <- NULL
+
+for(year in years) {
+  for(quarter in quarters) {
+    for(type in types) {
+      
+      filename <-
+        paste0(
+          "pge_data/PGE_",
+          year,
+          "_Q",
+          quarter,
+          "_",
+          type,
+          "UsageByZip.csv"
+        )
+
+      # print(filename)
+        
+      # for Q's that don't exist
+      if(!file.exists(filename)) next
+      
+      temp <- read_csv(filename)
+      
+      
+      # converting to standardize units
+      
+      if(type == "Electric") {
+        temp <-
+          temp %>%
+          mutate(TOTALKBTU = TOTALKWH * 3.412) %>%
+          select(-AVERAGEKWH,-TOTALKWH)
+      }
+      
+      if(type == "Gas") {
+        temp <-
+          temp %>%
+          mutate(TOTALKBTU = TOTALTHM * 99.976) %>%
+          select(-AVERAGETHM,-TOTALTHM)
+      }
+
+      pge_data_raw <-
+        rbind(pge_data_raw, temp)
+      
+    }
+  }
+}
+```
+
+# manipulating data
+```{r}
+# make two data objects for plotting later
+# one for resdiential, one for commercial
+residential_data <-
+  filter(
+    pge_data_raw, CUSTOMERCLASS %in% 
+           c(
+             "Elec- Residential", 
+             "Gas- Residential"
+             )
+    )
+
+commercial_data <-
+  filter(
+    pge_data_raw, CUSTOMERCLASS %in% 
+           c(
+             "Elec- Commercial", 
+             "Gas- Commercial"
+             )
+    )
+
+# selecting only the columns we want
+res_data_to_plot <-
+  select(
+    residential_data,
+    MONTH, YEAR, CUSTOMERCLASS, TOTALKBTU
+  )
+
+com_data_to_plot <-
+  select(
+    commercial_data,
+    MONTH, YEAR, CUSTOMERCLASS, TOTALKBTU
+  )
+
+# create month index to give us our 54 months
+res_data_to_plot <-
+  mutate(res_data_to_plot,
+         MONTH_INDEX = 12 * (YEAR %% 2017) + MONTH)
+
+com_data_to_plot <-
+  mutate(com_data_to_plot,
+         MONTH_INDEX = 12 * (YEAR %% 2017) + MONTH)
+
+# grouping data by month, customer class
+# res
+res_data_to_plot_grouped <-
+  group_by(
+    res_data_to_plot,
+    MONTH_INDEX, CUSTOMERCLASS
+  )
+
+# com
+com_data_to_plot_grouped <-
+  group_by(
+    com_data_to_plot,
+    MONTH_INDEX, CUSTOMERCLASS
+  )
+
+# summarize to sum up by month
+res_month_summed <-
+  summarise(
+    res_data_to_plot_grouped,
+    TOTALKBTU = sum(TOTALKBTU, na.rm = T)
+  )
+
+com_month_summed <-
+  summarise(
+    com_data_to_plot_grouped,
+    TOTALKBTU = sum(TOTALKBTU, na.rm = T)
+  )
+
+#left off from textbook 1.7 3/4 down, "You'll notice that.."
+```
+
+# plotting
+```{r}
+# residential
+res_plot <-
+  res_month_summed %>% 
+  ggplot() +
+  geom_bar(
+    aes(
+      x = MONTH_INDEX,
+      y = TOTALKBTU,
+      fill = CUSTOMERCLASS
+    ),
+    stat = "identity",
+    position = "stack"
+  ) +
+  labs(
+    x = "Month",
+    y = "kBtu",
+    title = "Residential Energy Use 2017-2021",
+    fill = "Energy Type"
+  )
+
+res_plot %>% ggplotly()
+
+# commercial
+com_plot <-
+  com_month_summed %>% 
+  ggplot() +
+  geom_bar(
+    aes(
+      x = MONTH_INDEX,
+      y = TOTALKBTU,
+      fill = CUSTOMERCLASS
+    ),
+    stat = "identity",
+    position = "stack"
+  ) +
+  labs(
+    x = "Month",
+    y = "kBtu",
+    title = "Commercial Energy Use 2017-2021",
+    fill = "Energy Type"
+  )
+
+com_plot %>% ggplotly()
+```
+
+# comments
