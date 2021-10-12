@@ -1,0 +1,205 @@
+---
+title: "HendricksonSwen_A2"
+author: "Swen Hendrickson"
+date: "10/3/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r SETUP, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+
+library(tidyverse)
+library(plotly)
+library(sf)
+library(tigris)
+library(mapview)
+library(leaflet)
+library(censusapi)
+
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+```
+
+```{r DATA PREP FROM TXT BOOK}
+## from ch 2.1
+
+ca_counties <- counties("CA", cb = T, progress_bar = F)
+projection <- "+proj=utm +zone=10 +ellps=GRS80 +datum=NAD83 +units=ft +no_defs"
+
+ca_counties_transformed <- 
+  ca_counties %>% 
+  st_transform(4326) %>% 
+  st_transform(26910) %>% 
+  st_transform(projection) %>% 
+  st_transform(st_crs(ca_counties))
+
+bay_county_names <-
+  c(
+    "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+bay_counties <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% bay_county_names)
+
+# use places() to load 'cities'
+ca_cities <- places("CA", cb = T, progress_bar = FALSE)
+
+# subset, intersection
+bay_cities <- ca_cities[bay_counties,]
+
+# to leave out cities that just barely touch the counties, map it
+bay_cities_within <-
+  ca_cities %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(ca_cities %>% select(GEOID)) %>%  # join with field name 'GEOID'
+                                              # select(sf_object) auto uses geometry
+  st_as_sf()
+
+mapview(bay_counties, alpha.regions = 0) + mapview(bay_cities_within, label = "NAME")
+
+# CBGs (Census Block Groups) again, more generalizable looping technique:
+bay_cbgs <- 
+  bay_county_names %>% 
+  map_dfr(function(county) {
+    block_groups("CA", county, cb = T, progress_bar = F)
+  })
+
+# zip code stuff
+usa_zips <- 
+  zctas(cb = T, progress_bar = F)
+
+bay_zips <-
+  usa_zips %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(usa_zips %>% select(GEOID10)) %>% 
+  st_as_sf()
+```
+
+## from ch 2.2 (ACS Data)
+``` {r CH 2.2 ACS DATA}
+# default to 5-yr datasets
+
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+
+acs_vars_2019_5yr <-
+  listCensusMetadata(
+    name = "2019/acs/acs5",
+    type = "variables"
+  )
+
+saveRDS(acs_vars_2019_5yr, file = 'acs_vars_2019_5yr.Rdata')
+```
+
+```{r 2.3 DECENNIAL DATA}
+# pull in 2010 census for berkeley w population by block group
+# read in census data, transmutes to just give you block ID# and population
+# first for alameda county 2010
+alameda_pop_2010 <-
+  getCensus(
+    name = "dec/pl",
+    vintage = 2010,
+    region = "block:*", 
+    regionin = "state:06+county:001",
+    vars = "P1_001N"
+  ) %>% 
+  transmute(
+    block =
+      paste0(state,county,tract,block),
+    pop = P1_001N
+  )
+
+# then alameda 2020 blocks, pop
+alameda_pop_2020 <-
+  getCensus(
+    name = "dec/pl",
+    vintage = 2020,
+    region = "block:*", 
+    regionin = "state:06+county:001",
+    vars = "P1_001N"
+  ) %>% 
+  transmute(
+    block =
+      paste0(state,county,tract,block),
+    pop = P1_001N
+  )
+```
+
+
+```{r PLACE SPECIFIC, GET BLOCKS..}
+# to install and use user-developed packages from GitHub
+install.packages("devtools")
+library(devtools)
+install_github('walkerke/tigris')
+library(tigris)
+
+# bringing data back in w new packages above
+alameda_blocks_2010 <- blocks("CA", "Alameda", year = 2010, progress_bar = F)
+alameda_blocks_2020 <- blocks("CA", "Alameda", year = 2020, progress_bar = F)
+
+berkeley_boundary <- places("CA", progress_bar = T) %>% 
+  filter(NAME == "Berkeley")
+
+
+
+# Berkeley CBGs
+alameda_county_2010_cbgs <- block_groups("CA", "Alameda", cb = T, year = 2010, progress_bar = F)
+alameda_county_2020_cbgs <- block_groups("CA", "Alameda", cb = T, year = 2020, progress_bar = F)
+
+mapview(alameda_county_2010_cbgs)
+mapview(alameda_county_2020_cbgs)
+
+berkeley_cbgs <- block_groups()
+```
+
+
+
+
+
+
+- my own go at it, take 2 -
+```{r}
+# chosen city is Berkeley
+# get population for block groups
+# first for 2010, then 2020
+
+# Berkeley 2010 CBGs Population
+smc_pop_2020 <-
+  getCensus(
+    name = "dec/pl",
+    vintage = 2020,
+    region = "block:*", 
+    regionin = "state:06+county:081",
+    vars = "P1_001N"
+  ) %>% 
+  transmute(
+    block =
+      paste0(state,county,tract,block),
+    pop = P1_001N
+  ).
+
+berkeley_pop_2010 <-
+  getCensus(
+    name = "dec/pl",
+    vintage = 2010,
+    region = "block:*", 
+    regionin = "state:06+county:081",
+    vars = "P1_001N"
+  )
+
+```
+
+> will need to use colbind()

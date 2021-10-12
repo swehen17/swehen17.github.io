@@ -1,0 +1,176 @@
+---
+title: "HendricksonSwen_A2"
+author: "Swen Hendrickson"
+date: "10/3/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r SETUP, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+
+library(tidyverse)
+library(plotly)
+library(sf)
+library(tigris)
+library(mapview)
+library(leaflet)
+
+ca_counties <- counties("CA", cb = T, progress_bar = F)
+projection <- "+proj=utm +zone=10 +ellps=GRS80 +datum=NAD83 +units=ft +no_defs"
+
+ca_counties_transformed <- 
+  ca_counties %>% 
+  st_transform(4326) %>% 
+  st_transform(26910) %>% 
+  st_transform(projection) %>% 
+  st_transform(st_crs(ca_counties))
+
+bay_county_names <-
+  c(
+    "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+bay_counties <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% bay_county_names)
+```
+
+```{r MAPPING TECHNIQUES}
+# one mapping technique:
+ggplot(ca_counties) + geom_sf()
+
+# another mapping technique:
+mapview(ca_counties)
+
+# a third, more intricate mapping technique:
+leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(
+    data = ca_counties
+  ) %>% 
+  addMarkers(
+    data = ca_counties %>% 
+      st_centroid()
+  )
+
+# again, but just for the bay
+ggplot(bay_counties) + geom_sf()
+
+# use places() to load 'cities'
+ca_cities <- places("CA", cb = T, progress_bar = FALSE)
+
+# subset, intersection
+bay_cities <- ca_cities[bay_counties,]
+
+# bay cities in map
+mapview(bay_counties, alpha.regions = 0) + mapview(bay_cities)
+
+# to leave out cities that just barely touch the counties, map it
+bay_cities_within <-
+  ca_cities %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(ca_cities %>% select(GEOID)) %>%  # join with field name 'GEOID'
+                                              # select(sf_object) auto uses geometry
+  st_as_sf()
+
+mapview(bay_counties, alpha.regions = 0) + mapview(bay_cities_within, label = "NAME")
+
+# shorter way to do the stanza performed above
+bay_cities_within <-
+  ca_cities[which(ca_cities$GEOID %in% st_centroid(ca_cities)[bay_counties, ]$GEOID), ]
+
+mapview(bay_counties, alpha.regions = 0) + mapview(bay_cities_within, label = "NAME")
+
+# to color code and show differences between groups above (touching vs centroids)
+leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(
+    data = bay_counties,
+    fill = F,
+    weight = 2,
+    label = ~NAME
+  ) %>%
+  addPolygons(
+    data = bay_cities %>% 
+      filter(!GEOID %in% bay_cities_within$GEOID),
+    color = "red",
+    label = ~NAME
+  ) %>% 
+  addPolygons(
+    data = bay_cities_within,
+    color = "green",
+    label = ~NAME
+  )
+
+# Census Block Groups, aka CBGs (smallest granularity)
+bay_cbgs <- block_groups("CA", bay_county_names[1:9], cb = T, progress_bar = F)
+
+# CBGs again, more generalizable looping technique:
+bay_cbgs <- 
+  bay_county_names %>% 
+  map_dfr(function(county) {
+    block_groups("CA", county, cb = T, progress_bar = F)
+  })
+```
+
+```{r ALTERNATE DATA SOURCE FOR GEOMETRIES}
+# load (from web URL)
+bay_cbgs_clip <- st_read("https://opendata.arcgis.com/datasets/037fc1597b5a4c6994b89c46a8fb4f06_0.geojson")
+
+# map / plot
+ggplot(bay_cbgs_clip) + geom_sf()
+```
+
+```{r ZCTAs, PGE Data}
+usa_zips <- 
+  zctas(cb = T, progress_bar = F)
+
+bay_zips <-
+  usa_zips %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(usa_zips %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+pge_20_elec <- read_csv("PGE_2017_Q1_ElectricUsageByZip.csv")
+
+getwd()
+
+pge_20_res_elec <-
+  pge_20_elec %>% 
+  filter(CUSTOMERCLASS == "Elec- Residential") %>% 
+  mutate(
+    ZIPCODE = ZIPCODE %>% as.character()
+  ) %>% 
+  group_by(ZIPCODE) %>% 
+  summarize(
+    TOTALKWH = sum(TOTALKWH, na.rm = T)
+  ) %>% 
+  right_join(
+    bay_zips %>% select(GEOID10),
+    by = c("ZIPCODE" = "GEOID10")
+  ) %>% 
+  st_as_sf() %>% 
+  st_transform(4326)
+```
+
+# 2.2 ACS Data
+
+
+
+
+
+

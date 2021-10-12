@@ -1,0 +1,286 @@
+---
+title: "HendricksonSwen_A2_v2"
+author: "Swen Hendrickson"
+date: "10/10/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r, include = F}
+knitr::opts_chunk$set(warning = F, message = F, echo = F)
+```
+
+```{r LOAD LIBRARYS, SET SYSTEM ENVIR}
+library(tigris)
+library(tidyverse)
+library(sf)
+library(mapview)
+library(leaflet)
+library(censusapi)
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+```
+
+Step 1:
+My place/city is Berkeley, CA, which is in Alameda County [AC] (county #: 001).
+Load 2020 Decennial Census pop data for AC..
+
+```{r GET DECENNIAL CENSUS DATA}
+dec_vars_2020 <-
+  listCensusMetadata(
+    name = "2020/dec/pl",
+    type = "variables"
+  )
+
+# ac = alameda county (where Berkeley is located)
+ac_pop_2020 <-
+  getCensus(
+    name = "dec/pl",
+    vintage = 2020,
+    region = "block:*", 
+    regionin = "state:06+county:001",
+    vars = "P1_001N"
+  ) %>% 
+  transmute(
+    GEOID20 =
+      paste0(state,county,tract,block),
+    pop_2020 = P1_001N
+  )
+ac_blocks_2020 <- blocks("CA", "Alameda", year = 2020, progress_bar = F)
+```
+
+Step 2: Get AC population data for 2010.
+
+```{r}
+dec_vars_2010 <-
+  listCensusMetadata(
+    name = "2010/dec/pl",
+    type = "variables"
+  )
+ac_pop_2010 <-
+  getCensus(
+    name = "dec/pl",
+    vintage = 2010,
+    region = "block:*", 
+    regionin = "state:06+county:001",
+    vars = "P001001"
+  ) %>% 
+  transmute(
+    GEOID10 = 
+      paste0(state,county,tract,block),
+    pop_2010 = P001001
+  )
+ac_blocks_2010 <- blocks("CA", "Alameda", year = 2010, progress_bar = F)
+```
+
+Step 3: Define Berkeley boundaries by the 2010 city line (as 2020 is bigger).
+
+```{r DEFINE SET OF BLOCKS PART I}
+berkeley_boundary <- places("CA", progress_bar = F) %>% 
+  filter(NAME == "Berkeley")
+berkeley_blocks_2010 <- ac_blocks_2010 %>%
+  st_centroid() %>%
+  .[berkeley_boundary, ] %>% 
+  st_drop_geometry() %>% 
+  left_join(ac_blocks_2010 %>% select(GEOID10)) %>% 
+  st_as_sf() %>%
+  select(GEOID10) %>%
+  left_join(ac_pop_2010)
+mapview(berkeley_blocks_2010) + mapview(berkeley_boundary, alpha.regions = 0, color = "red", lwd = 2)
+```
+
+Step 4: Get all 2020 blocks that intersect with 2010 blocks.
+
+```{r DEFINE SET OF BLOCKS PART 2 (2020)}
+berkeley_blocks_2020 <- ac_blocks_2020 %>%
+  .[berkeley_blocks_2010, ] %>% 
+  select(GEOID20) %>% 
+  left_join(ac_pop_2020)
+```
+
+Step 5: Use spatial subsetting to adjust 2020 population values based on 2010 block boundaries. (The 'cookie cutter' step).
+
+```{r SPATIAL SUBSETTING}
+berkeley_blocks_2020_intersect <- berkeley_blocks_2020 %>% 
+  st_transform(26910) %>% 
+  mutate(original_area = st_area(.)) %>% 
+  st_intersection(
+    berkeley_blocks_2010 %>%
+      select(GEOID10) %>% 
+      st_transform(26910)
+  ) %>% 
+  mutate(
+    leftover_area = st_area(.),
+    perc_area = as.numeric( leftover_area / original_area),
+    pop_2020 = pop_2020 * perc_area
+  )
+```
+
+Step 6: Group and summarize (sum up) population amounts according to 2010 block definitions (GEOID10'S).
+
+```{r PIECE TOGETHER GEOIDS}
+berkeley_blocks_2020_reshaped <- berkeley_blocks_2020_intersect %>%
+  st_drop_geometry() %>% 
+  group_by(GEOID10) %>% 
+  summarize(
+    pop_2020 = sum(pop_2020, na.rm=T) %>% round()
+  )
+```
+
+Step 7: Get the difference between 2010 and 2020 population densities per block. (Convert density in ppl/SF to ppl/acre).
+
+```{r GET POP DIFFERENCE}
+projection <- "+proj=utm +zone=10 +ellps=GRS80 +datum=NAD83 +units=ft +no_defs"
+berkeley_pop_2010_2020 <- berkeley_blocks_2010 %>% 
+  left_join(berkeley_blocks_2020_reshaped) %>% 
+  mutate(
+    absolute_pop = (pop_2020 - pop_2010) / as.numeric(st_area(.)) * 43560
+  )
+```
+
+Step 8: Define color palette.
+
+```{r BOUNDS, PALETTE}
+max <- max(abs(berkeley_pop_2010_2020$absolute_pop))
+
+absolute_pal <- colorNumeric(
+  palette = "PiYG",
+  domain = c(-max,max)
+)
+```
+
+Step 9: Map the results. ***Note that the first map shows very little population changes from 2010 to 2020, at least on the given scale, which was based on the largest value from our comparative 2020_2010 table. This largest value was ~6,000, and from inspecting the map appears to be a section of University Avenue contained to the street itself without including any buildings. So, either something odd happened with the data, or this was an error. Error or not, I continued to reduce the scale of the color scheme in order to start showing more color on the map to indicate smaller amounts of population change. Some of the other values from the 2020_2010 table seem surprisingly high (in the 2,000 - 4,000 range). I wonder if these values have to do with the large homeless encampments in Berkeley, or perhaps large new apartment / condo buildings. Either way, each successive map below shows finer gradients of change, in essence ignoring or lumping together the excessively large values that are beyond the max number shown in the legend.
+
+```{r MAP WITH LEAFLET}
+# mapped using actual max(abs) value from data [which was ~6000]
+leaflet(berkeley_pop_2010_2020) %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    fillColor = ~absolute_pal(absolute_pop),
+    label = ~round(absolute_pop),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.75,
+    weight = 1
+  ) %>% 
+  addLegend(
+    pal = absolute_pal,
+    value = c(-max,max),
+    title = "Berkeley Population Changes by Block from 2010 to 2020"
+  )
+
+# mapped again using a smaller max value (1/2 previous val) to remove outliers and show more color gradient
+max2 <- 3000
+
+absolute_pal2 <- colorNumeric(
+  palette = "PiYG",
+  domain = c(-max2,max2)
+)
+leaflet(berkeley_pop_2010_2020) %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    fillColor = ~absolute_pal2(absolute_pop),
+    label = ~round(absolute_pop),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.75,
+    weight = 1
+  ) %>% 
+  addLegend(
+    pal = absolute_pal2,
+    value = c(-max2,max2),
+    title = "Berkeley Population Changes by Block from 2010 to 2020"
+  )
+
+# mapped again using a smaller max value (1/2 previous val) to remove outliers and show more color gradient
+max3 <- 1500
+
+absolute_pal3 <- colorNumeric(
+  palette = "PiYG",
+  domain = c(-max3,max3)
+)
+leaflet(berkeley_pop_2010_2020) %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    fillColor = ~absolute_pal3(absolute_pop),
+    label = ~round(absolute_pop),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.75,
+    weight = 1
+  ) %>% 
+  addLegend(
+    pal = absolute_pal2,
+    value = c(-max3,max3),
+    title = "Berkeley Population Changes by Block from 2010 to 2020"
+  )
+
+# mapped again using a smaller max value (1/2 previous val) to remove outliers and show more color gradient
+max4 <- 750
+
+absolute_pal4 <- colorNumeric(
+  palette = "PiYG",
+  domain = c(-max4,max4)
+)
+leaflet(berkeley_pop_2010_2020) %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    fillColor = ~absolute_pal4(absolute_pop),
+    label = ~round(absolute_pop),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.75,
+    weight = 1
+  ) %>% 
+  addLegend(
+    pal = absolute_pal2,
+    value = c(-max4,max4),
+    title = "Berkeley Population Changes by Block from 2010 to 2020"
+  )
+
+# mapped again using a smaller max value (1/2 previous val) to remove outliers and show more color gradient
+max5 <- 375
+
+absolute_pal5 <- colorNumeric(
+  palette = "PiYG",
+  domain = c(-max5,max5)
+)
+leaflet(berkeley_pop_2010_2020) %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    fillColor = ~absolute_pal5(absolute_pop),
+    label = ~round(absolute_pop),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.75,
+    weight = 1
+  ) %>% 
+  addLegend(
+    pal = absolute_pal2,
+    value = c(-max5,max5),
+    title = "Berkeley Population Changes by Block from 2010 to 2020"
+  )
+
+# mapped again using a smaller max value (1/2 previous val) to remove outliers and show more color gradient
+max6 <- 187.5
+
+absolute_pal6 <- colorNumeric(
+  palette = "PiYG",
+  domain = c(-max6,max6)
+)
+leaflet(berkeley_pop_2010_2020) %>% 
+  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
+  addPolygons(
+    fillColor = ~absolute_pal6(absolute_pop),
+    label = ~round(absolute_pop),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.75,
+    weight = 1
+  ) %>% 
+  addLegend(
+    pal = absolute_pal2,
+    value = c(-max6,max6),
+    title = "Berkeley Population Changes by Block from 2010 to 2020"
+  )
+```
