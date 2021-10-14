@@ -1,0 +1,229 @@
+---
+title: "HendricksonSwen_A3"
+author: "Swen Hendrickson"
+date: "10/13/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+# Introduction:
+ For my analysis of vulnerability to heat waves in the Bay Area, I chose to focus on three characteristics in defining my 'at-risk' population: 
+ 1: age, 
+ 2: language, and 
+ 3: cost of electricity. 
+Specifically, from the available variables on the 2019 ACS, I used 
+ 1: AGEP: an integer representing someone's age in years.
+ 2: HHL: for primary House-hold language spoken at home, and
+ 3: ELEP: for monthly electricity cost.
+In defining my vulnerable population, I filtered each variable as follows:
+ 1. Age to only include people at or above the age of 65,
+ 2. Household language to include only houses where English is NOT the primary language, and
+ 3. Electricity cost for any bill coming in over $100 per month (after running hist() on each variable from the initial nation-wide pums data, $50-100 was the highest frequency value [mode] in the histogram, so >$100 seemed a natural way to define 'expensive electricity').
+ 
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+
+library(censusapi)
+library(tidyverse)
+library(tigris)
+library(sf)
+library(leaflet)
+
+# Derek's key. Mine doesn't work..
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+
+# efficiently load in data from zip in a temp file to discard after
+temp = tempfile()
+download.file("https://www2.census.gov/programs-surveys/acs/data/pums/2019/1-Year/csv_hca.zip", destfile = temp)
+
+# 2019 CA (California) data
+pums_hca_2019_1yr = read_csv(unzip(temp,"psam_h06.csv"))
+
+unlink(temp)
+```
+
+```{r LOAD PUMS DATA AND CHOOSE VARIABLES}
+# the variables I want are:
+ # ELEP = Electricity Cost (bc Fridge and AC, especially AC, take a lot of energy)
+ # HHL = Household Language: because if primary language is not English, it will be harder to access resources, get help / support, etc. (e.g. getting medical help, reading up on local informational resources, etc.)
+ # AGEP = because elderly people (>65 yrs old) are more at risk of heat-related illnesses
+
+pums_2019_1yr = getCensus(
+  name = "acs/acs1/pums",
+  vintage = 2019,
+  region = "public use microdata area:*",
+  regionin = "state:06",
+  vars = c(
+    "SERIALNO",
+    "SPORDER",
+    "PWGTP",
+    "WGTP",
+    "NP",
+    "ELEP",
+    "HHL",
+    "AGEP"
+  )
+)
+```
+
+# Quick look at my chosen variables:
+```{r VARS QUICK LOOK I}
+# explore my 3 vars
+hist(as.numeric(pums_2019_1yr$ELEP))
+ # most people have affordable electricity price, but some do have very expensive
+```
+- Takeaway: most people have affordable electricity price, but some do have very expensive. Above 100 is a logical cut off point.
+
+```{r VARS QUICK LOOK II}
+hist(as.numeric(pums_2019_1yr$HHL))
+ # english as second language
+```
+- Takeaway: English predominant language, but many households with other languages as primary household language.
+
+```{r VARS QUICK LOOK III}
+hist(as.numeric(pums_2019_1yr$AGEP))
+ # tails off as you go from 60 to 100 (less and less old people around) 
+```
+- Takeaway: Over 65 population smaller and tailing off, but still substantive.
+
+```{r FILTER TO BAY AREA PUMAs and PUMS}
+ca_pumas =
+  pumas("CA", cb = T, progress_bar = F)
+
+bay_county_names =
+  c(
+     "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+bay_counties =
+  counties("CA", cb = T, progress_bar = F) %>% 
+  filter(NAME %in% bay_county_names)
+
+bay_pumas =
+  ca_pumas %>% 
+  st_centroid() %>% 
+  .[bay_counties,] %>% 
+  st_drop_geometry() %>% 
+  left_join(ca_pumas %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+bay_pums =
+  pums_2019_1yr %>% 
+  mutate(
+    PUMA = str_pad(public_use_microdata_area,5,"left","0")
+  ) %>% 
+  filter(PUMA %in% bay_pumas$PUMACE10)
+```
+
+```{r CREATE SUMMARY STATS OF A UNIQUE COMBO}
+bay_pums_heat_suscep =
+  bay_pums %>% 
+  filter(!duplicated(SERIALNO)) %>% 
+  mutate(
+    WGTP = as.numeric(WGTP),
+    old_esl_eleccost = ifelse(
+      (AGEP >= 65) &
+        (HHL != 1) &
+        (ELEP > 100),
+      WGTP,
+      0
+    )
+  ) %>% 
+  group_by(PUMA) %>% 
+  summarise(
+    old_esl_eleccost =
+      sum(old_esl_eleccost, na.rm = T)/sum(WGTP, na.rm = T)*100
+  ) %>% 
+  left_join(
+    bay_pumas %>% 
+      select(PUMACE10),
+    by = c("PUMA" = "PUMACE10")
+  ) %>% 
+  st_as_sf()
+```
+
+# Key Assumptions: 
+## Age: 
+- that older folks are on the whole more susceptible to heat related illnesses.
+## Electricity: 
+- That electricity cost suggests a higher rate charged by the utility in that PUMA ($ / kWh), and that a higher electricity rate will drive people's action and actually lead them to use less electricity. 
+- That people have AC units in the first place that they can choose to run.
+## Language: 
+- That medical and other informational resources are harder to access for ESL (English as Second Language) people.
+
+```{r MAP IT}
+pums_pal = colorNumeric(
+  palette = "Reds",
+  domain = bay_pums_heat_suscep$old_esl_eleccost
+)
+
+leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(
+    data = bay_pums_heat_suscep,
+    fillColor = ~pums_pal(old_esl_eleccost),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.5,
+    weight = 1,
+    label = ~paste0(
+      round(old_esl_eleccost),
+      "% Elderly, non-English speaking residents with Costly Electricity"
+    ),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    )
+  ) %>% 
+  addLegend(
+    data = bay_pums_heat_suscep,
+    pal = pums_pal,
+    values = ~old_esl_eleccost,
+    title = "% Elderly (older than 65) people with<br>English as Second Language and<br>Expensive Electricity"
+  )
+
+# find total population of people with these traits in Bay Area
+sum(bay_pums_heat_suscep$old_esl_eleccost)
+```
+
+# Takeaways / Usefulness:
+   I feel pretty confident in my assumptions that older age increases risk of health effects, and that having a primary language other than English makes resources in the Bay Area harder to access to some degree. The Electricity Cost variable feels that it makes the biggest assumption, in terms of requiring multiple dots to be connected in order to make sense. Given more time, I would explore the 518 available variables more for factors that more obviously or directly contribute to vulnerability in heat waves. In my first attempt, I used the REFR variable indicating the number of refrigerators in each house, believing that cold drinks (and perhaps ice packs) are an important source of relief during heat waves, especially in households that do not have AC. The population without a refrigerator was far too small to yield useful results. Some other factors I might think to consider include infants (also more susceptible to health effects), whether people of certain racial groups have higher rates of heat-related health issues, and perhaps some variable that can help determine the localized heat intensity for certain houses or areas - for example if there are trees and parks nearby providing shade, or whether a house is in a denser neighborhood surrounded by other buildings and roads which radiate more heat.
+
+   To put my analysis in perspective, the total number of individuals meeting all three criteria (1: older than 65, 2: English NOT primary household language, and 3: monthly electricity costs greater than $100) was only 442 people. This analysis offered a useful exercise in data retrieval, coding, and analytical parameter-setting. However, given another pass, I would seek out variables that yielded a larger at-risk population, and perhaps one for whom a large-scale solution could be presented.
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
