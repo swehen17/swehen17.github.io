@@ -1,0 +1,206 @@
+---
+title: "HendricksonSwen_A4"
+author: "Swen Hendrickson"
+date: "10/18/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+```
+
+```{r LIBRARIES SETENV METADATA}
+library(tidyverse)
+library(censusapi)
+
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+
+acs_vars_2019_5yr <-
+  listCensusMetadata(
+    name = "2019/acs/acs5",
+    type = "variables"
+  )
+```
+
+```{r LOAD C15002A FOR WHITE ALONE to practice}
+# eduatt = educational attainment [level]
+bay_eduatt_white <-
+  getCensus(
+    name = "acs/acs5",
+    vintage = 2019,
+    region = "county:001,013,041,055,075,081,085,095,097",
+    regionin = "state:06",
+    vars = "group(C15002A)"
+  ) %>%
+  select(!c(GEO_ID,state,NAME) & !ends_with(c("EA","MA","M"))) %>%
+  pivot_longer(
+    ends_with("E"),
+    names_to = "name",
+    values_to = "estimate"
+  ) %>%
+  left_join(
+    acs_vars_2019_5yr %>% 
+      select(name, label)
+  ) %>% 
+  select(-name) %>% 
+  separate(
+    label,
+    into = c(NA,NA,"sex", "edu_level"),
+    sep = "!!"
+  ) %>% 
+  filter(!is.na(edu_level))
+```
+
+```{r MAKE BIG DataFrame FROM ALL RACE TABLES}
+census_race_categories <- 
+  c(
+    "White Alone",
+    "Black or African American",
+    "American Indian and Alaska Native Alone",
+    "Asian Alone",
+    "Native Hawaiian and Other Pacific Islander Alone",
+    "Some Other Race Alone",
+    "Two or More Races"
+  )
+
+bay_eduatt_race <-
+  1:7 %>% 
+  map_dfr(function(x){
+    getCensus(
+      name = "acs/acs5",
+      vintage = 2019,
+      region = "county:001,013,041,055,075,081,085,095,097",
+      regionin = "state:06",
+      vars = paste0("group(C15002",LETTERS[x],")")
+    ) %>%
+      select(!c(GEO_ID,state,NAME) & !ends_with(c("EA","MA","M"))) %>%
+      pivot_longer(
+        ends_with("E"),
+        names_to = "name",
+        values_to = "estimate"
+      ) %>%
+      left_join(
+        acs_vars_2019_5yr %>% 
+          select(name, label)
+      ) %>% 
+      select(-name) %>% 
+      separate(
+        label,
+        into = c(NA,NA,"sex","edu_att"),
+        sep = "!!"
+      ) %>% 
+      filter(!is.na(edu_att)) %>% 
+      mutate(race = census_race_categories[x])
+  })
+
+# reduce to only one county (Alameda county = 001)
+alameda_eduatt_race <-
+  bay_eduatt_race %>%  # from visual inspection of df, better way exists..
+  subset(county == "001") # %>% 
+  # group_by(edu_att, race) %>% 
+  # summarise(estimate = sum(estimate)) # %>% 
+  # # mutate(index = c(4,2,1,3)) %>% 
+  # arrange(index) # summarise seemed to alphabetize. had to put back in order of levels
+```
+
+```{r PLOTTING I ABSOLUTE VALUES}
+# add totals
+alameda_eduatt_race_TOTAL =
+  alameda_eduatt_race %>% 
+  group_by(race) %>% 
+  summarise(estimate = sum(estimate)) %>% 
+  mutate(edu_att = "Total")
+
+# final df prep, plot
+alameda_eduatt_race %>% 
+  group_by(edu_att, race) %>% 
+  summarize(estimate = sum(estimate)) %>% 
+  rbind(alameda_eduatt_race_TOTAL) %>% 
+  ggplot() +
+  geom_bar(
+    aes(
+      x = edu_att %>% factor(levels = rev(c("Total",unique(alameda_eduatt_race$edu_att)))),
+      y = estimate,
+      fill = race %>% factor(levels = rev(unique(alameda_eduatt_race$race)))
+    ),
+    stat = "identity",
+    position = "stack"
+  ) +
+  labs(
+    x = "Educational Attainment",
+    y = "Population 25 years or older",
+    title = "Alameda County Educational Attainment by Race",
+    fill = "Race"
+  ) +
+  coord_flip() +
+  theme(
+    legend.position = "bottom",
+    legend.direction = "vertical"
+  )  +
+  guides(
+    fill = guide_legend(
+      reverse = T
+    )
+  )
+```
+
+## Note:
+ The above intermediary plot (with ABSOLUTE counts of education by race) was included to show that Alameda county is pretty well-educated, with almost half its residents achieving a Bachelor's degree or higher. Also we can get a sense of the sample and scale we're dealing with: county population just under 1.2M, fairly diverse makeup, etc. Below, the same values will be adjusted to just show proportionality.
+
+
+
+```{r PLOTTING II PROPORTIONAL VALUES}
+# add totals
+alameda_eduatt_race_TOTAL =
+  alameda_eduatt_race %>% 
+  group_by(race) %>% 
+  summarise(estimate = sum(estimate)) %>% 
+  mutate(edu_att = "Total")
+
+# final df prep, plot
+alameda_eduatt_race %>% 
+  group_by(edu_att, race) %>% 
+  summarize(estimate = sum(estimate)) %>% 
+  rbind(alameda_eduatt_race_TOTAL) %>% 
+  ggplot() +
+  geom_bar(
+    aes(
+      x = edu_att %>% factor(levels = rev(c("Total",unique(alameda_eduatt_race$edu_att)))),
+      y = estimate,
+      fill = race %>% factor(levels = rev(unique(alameda_eduatt_race$race)))
+    ),
+    stat = "identity",
+    position = "fill"
+  ) +
+  labs(
+    x = "Educational Attainment",
+    y = "Proportion of Population 25 years or older",
+    title = "Alameda County Educational Attainment by Race",
+    fill = "Race"
+  ) +
+  coord_flip() +
+  theme(
+    legend.position = "bottom",
+    legend.direction = "vertical"
+  )  +
+  guides(
+    fill = guide_legend(
+      reverse = T
+    )
+  )
+```
+
+
+
+# Analysis
+  In the plot above, the 'Total' bar in the top row shows us the racial make up of Alameda County residents above the age of 25. To start, it is noticeable that Alameda County is more diverse than some other counties in the Bay Area and than the Bay Area as a whole. Turning to focus on varying levels of educational attainment, the plot shows us some important disparities.  
+  
+  Let's first look at the lowest and highest buckets of education represented. In the first tier - 'Less than high school diploma', we see that White people are underrepresented compared to their share of the population. But perhaps the most noticeable feature of this tier is how over-represented the 'Some Other Race Alone' group is. This is something of a catch all group on the Census survey, so it's hard to draw specific conclusions about specific groups. However, I can hypothesize that this group would likely include the large number of Central American immigrants living in Alameda County from countries like Guatemala and its neighbors, and belonging to ethnic groups like Maya.  
+  
+  Glancing at the middle two education tiers, we notice the 'Black or African American' population being over-represented, among other trends (the continued over-representation of 'Some Other Race' in the 'High School Graduate' category).  
+
+  And finally, analyzing the highest bucket of education, 'Bachelor's degree or higher', we see both 'White Alone' and 'Asian Alone' being over-represented, while EVERY OTHER racial group is under represented.  
+  
+  In conclusion, we can say with certainty that there IS absolutely disproportionate education by race in Alameda County. Being born in a White or Asian household makes it more likely for you to achieve college education or higher, while being born Black, Native American, Pacific Islander, or 'Some Other Race' means you might be more likely to find yourself in an educational tier lower than others.

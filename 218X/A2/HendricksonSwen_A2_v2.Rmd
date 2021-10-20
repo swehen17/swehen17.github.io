@@ -8,22 +8,22 @@ editor_options:
 ---
 
 ```{r, include = F}
-knitr::opts_chunk$set(warning = F, message = F, echo = F)
+knitr::opts_chunk$set(warning = F, message = F)
 ```
 
-```{r LOAD LIBRARYS, SET SYSTEM ENVIR}
+```{r}
 library(tigris)
 library(tidyverse)
 library(sf)
 library(mapview)
 library(leaflet)
 library(censusapi)
-Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+Sys.setenv(CENSUS_KEY="6f7c0626bea3c5e312eb4d33753d5dc4ce0d54f8")
 ```
 
-Step 1:
-My place/city is Berkeley, CA, which is in Alameda County [AC] (county #: 001).
-Load 2020 Decennial Census pop data for AC..
+This assignment builds directly off of material from Chapter 2, so start by preparing 2020 data for your place of interest. 
+
+Make sure you are using the developer version of `tigris`, as explained in Chapter 2.3, which will let you grab 2020 block shapefiles correctly.
 
 ```{r GET DECENNIAL CENSUS DATA}
 dec_vars_2020 <-
@@ -49,7 +49,7 @@ ac_pop_2020 <-
 ac_blocks_2020 <- blocks("CA", "Alameda", year = 2020, progress_bar = F)
 ```
 
-Step 2: Get AC population data for 2010.
+Next, I grab the same iplacermation for 2010. Note different variable names, which you would identify via https://api.census.gov/data/2010/dec/pl/variables.html or `dec_vars_2010`.
 
 ```{r}
 dec_vars_2010 <-
@@ -73,7 +73,7 @@ ac_pop_2010 <-
 ac_blocks_2010 <- blocks("CA", "Alameda", year = 2010, progress_bar = F)
 ```
 
-Step 3: Define Berkeley boundaries by the 2010 city line (as 2020 is bigger).
+Now, to begin constructing our aligned geometry set, I first choose to define my set of mapped blocks as the 2010 blocks whose centroids lie within the (default 2019) place boundary. You specify your own selected place below.
 
 ```{r DEFINE SET OF BLOCKS PART I}
 berkeley_boundary <- places("CA", progress_bar = F) %>% 
@@ -89,7 +89,7 @@ berkeley_blocks_2010 <- ac_blocks_2010 %>%
 mapview(berkeley_blocks_2010) + mapview(berkeley_boundary, alpha.regions = 0, color = "red", lwd = 2)
 ```
 
-Step 4: Get all 2020 blocks that intersect with 2010 blocks.
+Next, to perform spatial subsetting, we'll need all 2020 blocks that intersect with 2010 blocks.
 
 ```{r DEFINE SET OF BLOCKS PART 2 (2020)}
 berkeley_blocks_2020 <- ac_blocks_2020 %>%
@@ -98,7 +98,7 @@ berkeley_blocks_2020 <- ac_blocks_2020 %>%
   left_join(ac_pop_2020)
 ```
 
-Step 5: Use spatial subsetting to adjust 2020 population values based on 2010 block boundaries. (The 'cookie cutter' step).
+Now, I follow the spatial subsetting method shown in Chapter 2.4.
 
 ```{r SPATIAL SUBSETTING}
 berkeley_blocks_2020_intersect <- berkeley_blocks_2020 %>% 
@@ -116,7 +116,7 @@ berkeley_blocks_2020_intersect <- berkeley_blocks_2020 %>%
   )
 ```
 
-Step 6: Group and summarize (sum up) population amounts according to 2010 block definitions (GEOID10'S).
+At this point, the dataframe has both GEOID20 and GEOID10 IDs. The GEOID10 IDs tell us which GEOID20 pieces can be pieced together to form the full GEOID10 shape. So we can group and summarize to get the 2020 population counts within the GEOID10 boundaries. We don't need to retain geometries at this step, since we can join this back to the 2010 data.
 
 ```{r PIECE TOGETHER GEOIDS}
 berkeley_blocks_2020_reshaped <- berkeley_blocks_2020_intersect %>%
@@ -127,160 +127,81 @@ berkeley_blocks_2020_reshaped <- berkeley_blocks_2020_intersect %>%
   )
 ```
 
-Step 7: Get the difference between 2010 and 2020 population densities per block. (Convert density in ppl/SF to ppl/acre).
+Lastly, I join this to `place_blocks_2010` and compute the absolute difference. To compute density in people per acre, I transform to a planar coordinate system with units in ft and do the appropriate math. Note that `st_area()` produces results in a "unit" class, which can be converted to regular numbers using `as.numeric()`.
 
 ```{r GET POP DIFFERENCE}
 projection <- "+proj=utm +zone=10 +ellps=GRS80 +datum=NAD83 +units=ft +no_defs"
 berkeley_pop_2010_2020 <- berkeley_blocks_2010 %>% 
-  left_join(berkeley_blocks_2020_reshaped) %>% 
+  left_join() %>% 
   mutate(
-    absolute_pop = (pop_2020 - pop_2010) / as.numeric(st_area(.)) * 43560
+    absolute_pop = (___ - ___) / as.numeric(___) * 43560
   )
 ```
 
-Step 8: Define color palette.
+The SF Chronicle example has a color palette that goes from red negative values to green negative values, with white in the center. To get our color pallete to be symmetrical across 0, we need the minimum and maximum bounds to be equidistant from 0. For our absolute change, let's try stretching one bound to meet the other. Using https://www.nceas.ucsb.edu/sites/default/files/2020-04/colorPaletteCheatsheet.pdf, we can identify "PiYG" as a satisfactory palette for our purposes.
 
-```{r BOUNDS, PALETTE}
-max <- max(abs(berkeley_pop_2010_2020$absolute_pop))
+```{r}
+max <- max(abs(___))
 
 absolute_pal <- colorNumeric(
-  palette = "PiYG",
-  domain = c(-max,max)
+  palette = "___",
+  domain = c(-___,___)
 )
 ```
 
-Step 9: Map the results. ***Note that the first map shows very little population changes from 2010 to 2020, at least on the given scale, which was based on the largest value from our comparative 2020_2010 table. This largest value was ~6,000, and from inspecting the map appears to be a section of University Avenue contained to the street itself without including any buildings. So, either something odd happened with the data, or this was an error. Error or not, I continued to reduce the scale of the color scheme in order to start showing more color on the map to indicate smaller amounts of population change. Some of the other values from the 2020_2010 table seem surprisingly high (in the 2,000 - 4,000 range). I wonder if these values have to do with the large homeless encampments in Berkeley, or perhaps large new apartment / condo buildings. Either way, each successive map below shows finer gradients of change, in essence ignoring or lumping together the excessively large values that are beyond the max number shown in the legend.
+Lastly, map.
 
-```{r MAP WITH LEAFLET}
-# mapped using actual max(abs) value from data [which was ~6000]
-leaflet(berkeley_pop_2010_2020) %>% 
+```{r}
+leaflet(___) %>% 
   addProviderTiles(provider = providers$CartoDB.Positron) %>% 
   addPolygons(
-    fillColor = ~absolute_pal(absolute_pop),
-    label = ~round(absolute_pop),
+    fillColor = ~___(___),
+    label = ~round(___),
     color = "white",
     opacity = 0.5,
     fillOpacity = 0.75,
     weight = 1
   ) %>% 
   addLegend(
-    pal = absolute_pal,
-    value = c(-max,max),
-    title = "Berkeley Population Changes by Block from 2010 to 2020"
+    pal = ___,
+    value = c(-___,___),
+    title = "___"
   )
+```
 
-# mapped again using a smaller max value (1/2 previous val) to remove outliers and show more color gradient
-max2 <- 3000
+If you want to try multiple layers, you'll need to change some steps upstream to collect more than one field of information for each block. Then, you final leaflet step would look something like this:
 
-absolute_pal2 <- colorNumeric(
-  palette = "PiYG",
-  domain = c(-max2,max2)
-)
-leaflet(berkeley_pop_2010_2020) %>% 
+```{r}
+leaflet(___) %>% 
   addProviderTiles(provider = providers$CartoDB.Positron) %>% 
   addPolygons(
-    fillColor = ~absolute_pal2(absolute_pop),
-    label = ~round(absolute_pop),
+    fillColor = ~___(___),
+    label = ~round(___),
     color = "white",
     opacity = 0.5,
     fillOpacity = 0.75,
-    weight = 1
+    weight = 1,
+    group = "___"
   ) %>% 
-  addLegend(
-    pal = absolute_pal2,
-    value = c(-max2,max2),
-    title = "Berkeley Population Changes by Block from 2010 to 2020"
-  )
-
-# mapped again using a smaller max value (1/2 previous val) to remove outliers and show more color gradient
-max3 <- 1500
-
-absolute_pal3 <- colorNumeric(
-  palette = "PiYG",
-  domain = c(-max3,max3)
-)
-leaflet(berkeley_pop_2010_2020) %>% 
-  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
   addPolygons(
-    fillColor = ~absolute_pal3(absolute_pop),
-    label = ~round(absolute_pop),
+    fillColor = ~___(___),
+    label = ~round(___),
     color = "white",
     opacity = 0.5,
     fillOpacity = 0.75,
-    weight = 1
+    weight = 1,
+    group = "___"
   ) %>% 
   addLegend(
-    pal = absolute_pal2,
-    value = c(-max3,max3),
-    title = "Berkeley Population Changes by Block from 2010 to 2020"
-  )
-
-# mapped again using a smaller max value (1/2 previous val) to remove outliers and show more color gradient
-max4 <- 750
-
-absolute_pal4 <- colorNumeric(
-  palette = "PiYG",
-  domain = c(-max4,max4)
-)
-leaflet(berkeley_pop_2010_2020) %>% 
-  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
-  addPolygons(
-    fillColor = ~absolute_pal4(absolute_pop),
-    label = ~round(absolute_pop),
-    color = "white",
-    opacity = 0.5,
-    fillOpacity = 0.75,
-    weight = 1
+    pal = ___,
+    value = c(-___,___),
+    title = "___"
   ) %>% 
-  addLegend(
-    pal = absolute_pal2,
-    value = c(-max4,max4),
-    title = "Berkeley Population Changes by Block from 2010 to 2020"
-  )
-
-# mapped again using a smaller max value (1/2 previous val) to remove outliers and show more color gradient
-max5 <- 375
-
-absolute_pal5 <- colorNumeric(
-  palette = "PiYG",
-  domain = c(-max5,max5)
-)
-leaflet(berkeley_pop_2010_2020) %>% 
-  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
-  addPolygons(
-    fillColor = ~absolute_pal5(absolute_pop),
-    label = ~round(absolute_pop),
-    color = "white",
-    opacity = 0.5,
-    fillOpacity = 0.75,
-    weight = 1
-  ) %>% 
-  addLegend(
-    pal = absolute_pal2,
-    value = c(-max5,max5),
-    title = "Berkeley Population Changes by Block from 2010 to 2020"
-  )
-
-# mapped again using a smaller max value (1/2 previous val) to remove outliers and show more color gradient
-max6 <- 187.5
-
-absolute_pal6 <- colorNumeric(
-  palette = "PiYG",
-  domain = c(-max6,max6)
-)
-leaflet(berkeley_pop_2010_2020) %>% 
-  addProviderTiles(provider = providers$CartoDB.Positron) %>% 
-  addPolygons(
-    fillColor = ~absolute_pal6(absolute_pop),
-    label = ~round(absolute_pop),
-    color = "white",
-    opacity = 0.5,
-    fillOpacity = 0.75,
-    weight = 1
-  ) %>% 
-  addLegend(
-    pal = absolute_pal2,
-    value = c(-max6,max6),
-    title = "Berkeley Population Changes by Block from 2010 to 2020"
+  addLayersControl(
+    baseGroups = c("___","___"),
+    position = "___",
+    options = layersControlOptions(
+      collapsed = F
+    )
   )
 ```
