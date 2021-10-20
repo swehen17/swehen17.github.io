@@ -23,6 +23,8 @@ In defining my vulnerable population, I filtered each variable as follows:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = F, warning = F, message = F)
 
+# test comment
+
 library(censusapi)
 library(tidyverse)
 library(tigris)
