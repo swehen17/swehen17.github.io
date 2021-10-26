@@ -1,0 +1,254 @@
+---
+title: "HendricksonSwen_A5"
+author: "Swen Hendrickson"
+date: "10/25/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+
+library(tidyverse)
+library(censusapi)
+library(tigris)
+library(sf)
+library(leaflet)
+library(mapview)
+
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+
+# not used
+# acs_vars_2019_5yr <-
+#   listCensusMetadata(
+#     name = "2019/acs/acs5",
+#     type = "variables"
+#   )
+```
+
+```{r LOAD CES 4.0 DATA}
+library(readxl)
+
+temp <- tempfile()
+download.file("https://oehha.ca.gov/media/downloads/calenviroscreen/document/calenviroscreen40resultsdatadictionaryd12021.zip",destfile = temp)
+
+ces4 <- read_excel(
+  unzip(
+    temp, 
+    "CalEnviroScreen_4.0Excel_ADA_D1_2021.xlsx"
+  ), 
+  sheet = "DRAFTCES4.0_results"
+)
+
+unlink(temp)
+```
+
+```{r GET CENSUS TRACTS (W GEOMETRY)}
+bay_county_names <-
+  c(
+    "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+ca_tracts <- tracts("CA", cb = T, progress_bar = F)
+```
+
+# PM2.5 Concentrations and Asthma Prevalency in the Bay Area
+
+## Mapped by Census Tract
+```{r JOIN DFS AND MAP PM2.5 and ASTHMA I}
+ces4_bay_pm25_asthma <-
+  ces4 %>% 
+  filter(`California County` %in% bay_county_names) %>% 
+  select(`Census Tract`, PM2.5, Asthma) %>% 
+  left_join(
+    ca_tracts %>% 
+      transmute(GEOID = as.numeric(GEOID)), 
+    by = c("Census Tract" = "GEOID")
+  ) %>% 
+  st_as_sf()
+```
+
+Before showing any maps and plots, our variables in focus here must be defined. The measurements of PM2.5 and Asthma to follow are defined in the CalEnviroScreen 4.0 report as:
+
+- PM2.5: Annual mean  concentration  of PM2.5  (weighted  average of measured  monitor  concentrations  and  satellite  observations, µg/m3), over  three years  (2015  to  2017).
+
+- Asthma: Spatially  modeled, age-adjusted  rate of ED  visits  for asthma  per 10,000  (averaged  over  2015-2017).
+
+
+#### PM2.5:
+```{r JOIN DFS AND MAP PM2.5 and ASTHMA II}
+# PM2.5
+pm25_pal <- colorNumeric(
+  palette = "Reds",
+  domain = ces4_bay_pm25_asthma$PM2.5
+)
+
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = ces4_bay_pm25_asthma,
+    fillColor = ~pm25_pal(PM2.5),
+    color = "white",
+    weight = 0.5,
+    fillOpacity = 0.5,
+    label = ~PM2.5
+  )
+```
+
+This map shows higher concentrations of PM2.5 in more low lying and urban areas. There also seems to be more PM2.5 in the East Bay than any other large section of the Bay. 
+
+#### Asthma:
+```{r JOIN DFS AND MAP PM2.5 and ASTHMA III}
+# Asthma
+asthma_pal <- colorNumeric(
+  palette = "Oranges",
+  domain = ces4_bay_pm25_asthma$Asthma
+)
+
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = ces4_bay_pm25_asthma,
+    fillColor = ~asthma_pal(Asthma),
+    color = "white",
+    weight = 0.5,
+    fillOpacity = 0.5,
+    label = ~Asthma
+  )
+```
+
+Visual inspection of this map reveals a similar general trend as our PM2.5 map (higher prevalence in the East Bay). However, here we see much more contained 'hot spots', including places (cities/towns/neighborhoods) like East Oakland, West Oakland, Richmond, Valejo, and Antioch (among others). 
+
+
+
+
+
+## Correlation?
+```{r SCATTER PLOT}
+# make tidy df first, 3 cols, tract, x y
+# tract #, x = PM2.5, y = Asthma
+# combine existing dfs from before into one
+bay_pm25_asthma_tract <- 
+  # as.data.frame(ces4_bay_asthma) %>% 
+  # left_join(
+    as.data.frame(ces4_bay_pm25_asthma) %>% 
+  filter(
+    !is.na(PM2.5),
+    !is.na(Asthma)) %>% 
+  select(.,
+         c('Census Tract',
+           'PM2.5',
+           'Asthma'))
+
+ggplot(
+  data = bay_pm25_asthma_tract,
+  aes(
+      x = PM2.5,
+      y = Asthma
+    )
+  ) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(title = "Asthma Prevalence by PM2.5 concentrations \n in the Bay Area")
+  # ggtitle("Title")
+
+```
+
+Our regression line seems to capture the general positively correlated trend in our data points, however the shape of the plotted points does not seem linear. Asthma rates seem to shoot up more rapidly as the PM2.5 concentration goes from 8 to 9. This suggests perhaps a more exponential relationship. It should also be mentioned that there seem to be many outliers and quite widely spread data, particularly in the lower and higher ranges of PM2.5 concentration.
+
+```{r LINEAR REGRESSION ANALYSIS}
+model <- lm(Asthma ~ PM2.5, bay_pm25_asthma_tract)
+
+summary(model)
+```
+
+Comments: R^2 value quite low (0.09). Residuals are not centered on 0 (min ~(-50), max ~200), and they are not symmetrically distributed. A side point: the intercept is highly negative (impossible to have negative asthma rate). The slope of the regression line is not close to 0 (it's 19 with a standard error of 1.5), so there's no risk of the null hypothesis being true. The P-values are very low, which is a good sign. “An increase of 1 in PM2.5 is associated with an increase of 19.862 in Asthma”; “9% of the variation in Asthma is explained by the variation in PM2.5”.
+
+```{r PLOT RESIDUALS}
+plot(density(residuals(model)))
+```
+
+We see here that the residuals are not centered around 0, and also are not symmetrical (there is a right tail).
+
+
+
+
+
+## Now with log() transformation
+```{r SCATTER AND REGRESSION WITH LOG TRANSFORM I}
+# scatter
+ggplot(
+  data = bay_pm25_asthma_tract,
+  aes(
+      x = PM2.5,
+      y = log(Asthma)
+    )
+  ) +
+  geom_point() +
+  geom_smooth(method = "lm") +
+  labs(title = "Asthma Prevalence by PM2.5 concentrations \n in the Bay Area")
+  # ggtitle("Title")
+```
+
+This looks a little better. The curved (exponential shape) of the original plotted points has flattened out a little bit, but still only a little. Visually, the regression line seems to cut through the center of the points better (suggesting that our residuals will have a better centering at 0 and symmetry).
+
+```{r SCATTER AND REGRESSION WITH LOG TRANSFORM II}
+model_logtransformed <- lm(log(Asthma) ~ PM2.5, bay_pm25_asthma_tract)
+
+summary(model_logtransformed)
+```
+
+After the log transform, the residuals are much more symmetrical and centered on 0. R^2 improved but is still pretty low (0.10).
+
+```{r SCATTER AND REGRESSION WITH LOG TRANSFORM III}
+logtrans_resids <- residuals(model_logtransformed)
+
+plot(density(logtrans_resids))
+```
+
+We see clearly that the residuals now are much more evenly distributed around 0, and better centered. There is an interesting double hump which may suggest some notable trend or characteristic of the data.
+
+#### Map of Residuals after Log() Transform
+```{r MAP WITH NEW RESIDUALS PLOTTED}
+# add residuals to df with geometry
+map3df <- ces4_bay_pm25_asthma %>% 
+  filter(
+    !is.na(PM2.5),
+    !is.na(Asthma)) %>% 
+  mutate(
+    residuals = logtrans_resids
+  )
+
+resids_pal <- colorNumeric(
+  palette = "Purples",
+  domain = map3df$residuals
+)
+
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = map3df,
+    fillColor = ~resids_pal(residuals),
+    color = "white",
+    weight = 0.5,
+    fillOpacity = 0.5,
+    label = ~residuals
+  )
+```
+
+The tract with the most negative residual (at about -2 after being log transformed) is Stanford, CA! A negative residual means that the actual value for asthma rate in Stanford was LESS than what the model predicted. This means that our model (even after being improved from the log transformation of our Asthma measurement) is significantly overestimating what the rate of asthma would be at Stanford, given the amount of PM2.5 in the air. One possible cause of this could be that Stanford's population is rather temporary. So, either people come in for too short of a time to have the air quality effect their health (and cause asthma). Or, perhaps, the transient student population doesn't stay around for long enough to report their health conditions in collected surveys. It should be noted that Stanford's PM2.5 value is ~8, a mid range value just under the mean and median for the Bay Area.
+
+
+
+
+
+
