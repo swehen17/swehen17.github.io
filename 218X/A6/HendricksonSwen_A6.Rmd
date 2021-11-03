@@ -1,0 +1,179 @@
+---
+title: "HendricksonSwen_A6"
+author: "Swen Hendrickson"
+date: "10/28/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+# Building a Logit Model to Predict Lead Risk in San Francisco Houses
+
+```{r setup, include = F}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+
+setwd("~/GitHub/swehen17.github.io/218X/A6")
+
+library(censusapi)
+library(tidyverse)
+library(tigris)
+library(sf)
+library(leaflet)
+library(mapview)
+
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+
+pums_2019_1yr <- getCensus(
+  name = "acs/acs1/pums",
+  vintage = 2019,
+  region = "public use microdata area:*", 
+  regionin = "state:06",
+  vars = c(
+    "SERIALNO",
+    "SPORDER",
+    "PWGTP",
+    "WGTP",
+    # "NP",
+    # "HHL",
+    # "HINCP",
+    # "TEN",
+    "YBL", 
+    "BLD",
+    "TEN",
+    "MV",
+    "HINCP",
+    "AGEP"
+  )
+)
+
+saveRDS(pums_2019_1yr, "a6_pums.rds") # to not load again
+pums_2019_1yr <- readRDS("a6_pums.rds")
+
+ca_pumas <-
+  pumas("CA", cb = T, progress_bar = F)
+```
+
+### Map of SF with 7 PUMA districts:
+```{r SF PUMA MAP}
+sf_boundary <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME == "San Francisco")
+
+sf_pumas <-
+  ca_pumas %>% 
+  st_centroid() %>% 
+  .[sf_boundary, ] %>% 
+  st_drop_geometry() %>% 
+  left_join(ca_pumas %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+sf_pumas_map <- mapview(sf_pumas)
+
+sf_pumas_map
+
+# can clean weird places later if want..
+# just want 7 districts of SF
+```
+
+```{r DETERMINE LEAD RISK (based on old house, low income, children in house)}
+sf_pums <-
+  pums_2019_1yr %>% 
+  mutate(
+    PUMA = str_pad(public_use_microdata_area,5,"left","0")
+  ) %>% 
+  filter(PUMA %in% sf_pumas$PUMACE10)
+
+# steps 1, 2 done
+
+# create leadrisk variable
+sf_pums_clean <- sf_pums %>% 
+  mutate(
+    YBL = as.numeric(YBL),
+    AGEP = as.numeric(AGEP),
+    HINCP = as.numeric(HINCP)
+  ) %>% 
+  filter(
+    YBL %in% c(1, 2, 3)) %>%
+  group_by(SERIALNO) %>% 
+  summarise(
+    AGEP = min(AGEP),
+    WGTP = first(WGTP),
+    YBL = first(YBL),
+    BLD = first(BLD),
+    TEN = first(TEN),
+    MV = first(MV),
+    HINCP = first(HINCP),
+    PUMA = first(PUMA)
+  ) %>% 
+  mutate(leadrisk = ifelse(
+    HINCP < 90000 & AGEP < 6,
+    1, 0
+  ))
+```
+
+How many houses out of 2,264 (older houses) considered have 'lead risk'?
+
+```{r show sum}
+print(sum(sf_pums_clean$leadrisk))
+```
+
+### Build Logistic Regression Model and show summaries, log odds, odds, and PREDICTION
+```{r BUILD LOGIT MODEL}
+# factorize BLD, TEN, MV, PUMA
+sf_pums_factorized <- sf_pums_clean %>%
+  mutate(
+    units = BLD %>% 
+      factor(
+        levels = sf_pums_clean$BLD %>% 
+          unique() %>%
+          as.numeric() %>% 
+          sort()),
+    tenure = TEN %>% 
+      factor(
+        levels = sf_pums_clean$TEN %>% 
+          unique() %>% 
+          as.numeric() %>% 
+          sort()),
+    moveindate = MV %>% 
+      factor(
+        levels = sf_pums_clean$MV %>% 
+          unique() %>% 
+          as.numeric() %>% 
+          sort()),
+    pumacode = PUMA %>% 
+      factor(
+        levels = sf_pums_clean$PUMA %>%
+          unique() %>% 
+          # as.numeric() %>% 
+          sort()),
+    pumacode = as.factor(substring(pumacode, 2, 5))
+      )
+# treat PUMA as string
+
+logit_model <- glm(
+  # leadrisk ~ BLD + TEN + MV + PUMA,
+  leadrisk ~ units + tenure + moveindate + pumacode,
+  family = quasibinomial(),
+  data = sf_pums_factorized
+)
+```
+
+```{r logit contd, include = T, echo=TRUE}
+summary(logit_model)
+
+# transform to normal odds bw 0 to 1
+exp(coef(logit_model))
+
+# cont'd
+exp(coef(logit_model))/(exp(coef(logit_model))+1)
+
+# get random row
+random_row <- sample_n(sf_pums_factorized, 1)
+
+# predict based on random row
+predict(logit_model, random_row, type = "response")
+```
+
+
+
+
