@@ -1,0 +1,371 @@
+---
+title: "HendricksonSwen_A8"
+author: "Swen Hendrickson"
+date: "11/15/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+# Difference-in-Differences Analysis on BART Ridership 
+   (Assessing Nearby Towns to New (2018) Antioch BART Station)
+
+
+
+
+
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = F, message = F, warning = F)
+
+# Clear all variables, close all plots, and clear the console, load libraries
+rm(list=ls())   # clears variables
+graphics.off()   # clears plots
+cat("\014")   # clears console
+
+setwd("~/GitHub/swehen17.github.io/218X/A8")
+
+library(tigris)
+library(tidyverse)
+library(tidycensus)
+library(sf)
+library(censusapi)
+library(leaflet)
+library(StatMatch)
+```
+
+```{r SETUP PUMAS}
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+
+ca_pumas <-
+  pumas("CA", cb = T, progress_bar = F)
+
+bay_county_names <-
+  c(
+    "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+bay_counties <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% bay_county_names)
+
+bay_pumas <-
+  ca_pumas %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_drop_geometry() %>% 
+  left_join(ca_pumas %>% select(GEOID10)) %>% 
+  st_as_sf()
+```
+
+Location of new Antioch station and nearby PUMA of interest (which comprises towns of Oakley and Brentwood):
+
+```{r MAP IT WITH BART STATION AND PUMA OF INTEREST}
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = bay_pumas,
+    weight = 1,
+    color = "gray",
+    label = ~PUMACE10
+  ) %>% 
+  addMarkers(
+    lng = -121.78025199689912,   # finding lat long on google maps
+    lat = 37.99593068104423       # that's the BART station
+  ) %>% 
+  addPolygons(
+    data = bay_pumas %>% 
+      filter(PUMACE10 == "01309")
+  )
+```
+
+```{r BUILD DATA TO COMPARE YEARS}
+# this line shortens a much longer to load chunk from textbook
+pums_2014_2019 <- readRDS("pums_2014_2019_wts.rds")
+
+pums_bart <- pums_2014_2019 %>%
+  mutate(
+    PWGTP = as.numeric(PWGTP),
+    bart = ifelse(
+      JWTR %in% c("4"),
+      PWGTP,
+      0
+    )
+  ) %>% 
+  group_by(PUMA, year) %>% 
+  summarize(
+    pop = sum(PWGTP),
+    bart = sum(bart)
+  )
+```
+
+2017 Bay Area PUMA Populations (for reference):
+
+```{r 2017 VISUALIZATION OF POPULATION for reference}
+# Population first
+pums_pal <- colorNumeric(
+  palette = "YlOrRd",
+  domain = pums_bart %>% 
+    filter(year == 2017) %>% 
+    pull(pop)
+)
+
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = pums_bart %>% 
+      filter(year == 2017) %>% 
+      right_join(bay_pumas %>% select(PUMA = PUMACE10)) %>% 
+      st_as_sf(),
+    fillColor = ~pums_pal(pop),
+    color = "white",
+    weight = 1,
+    fillOpacity = 0.5,
+    label = ~paste0(PUMA,": Population ", pop)
+  )
+```
+
+2017 Bay Area BART Ridership (for reference):
+
+```{r 2017 VISUALIZATION OF BART RIDERSHIP for reference}
+#
+# Now BART Ridership
+#
+pums_pal <- colorNumeric(
+  palette = "GnBu",
+  domain = pums_bart %>% 
+    filter(year == 2017) %>% 
+    pull(bart)
+)
+
+leaflet() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = pums_bart %>% 
+      filter(year == 2017) %>% 
+      right_join(bay_pumas %>% select(PUMA = PUMACE10)) %>% 
+      st_as_sf(),
+    fillColor = ~pums_pal(bart),
+    color = "white",
+    weight = 1,
+    fillOpacity = 0.5,
+    label = ~paste0(PUMA,": ", bart, " BART commute riders")
+  )
+```
+
+Our focus PUMA (Oakley/Brentwood) in Red with 10 most similar PUMAs (in terms of BART ridership before 2018) in Blue:
+
+```{r DATA MANIPULATIONS and MATCHING}
+# pivot to wide format
+pums_bart_clean <-
+  pums_bart %>% 
+  select(-pop) %>% 
+  pivot_wider(       # pivot wider key function here, for easier math comparison
+    names_from = year,
+    values_from = bart
+  )
+
+# stuff from Ch 6.1
+obs_matrix <-
+  pums_bart_clean %>% 
+  ungroup() %>% 
+  select(`2014`,`2015`,`2016`, `2017`) %>%   # add 2017
+    as.matrix()   
+
+dist_matrix <- mahalanobis.dist(obs_matrix)
+
+rownames(dist_matrix) <- pums_bart_clean$PUMA
+colnames(dist_matrix) <- pums_bart_clean$PUMA
+
+# find 10 most similar PUMAs to treatment PUMA (Ch 6.1 techniques)
+# matching according to *absolute* BART ridership values
+match <- dist_matrix["01309",] %>% 
+  as.data.frame() %>% 
+  rownames_to_column() %>% 
+  rename(
+    PUMA = rowname,
+    match = "."
+  ) %>% 
+  right_join(
+    pums_bart_clean
+  ) %>% 
+  arrange(match) %>% 
+  .[1:11, ] %>% 
+  left_join(bay_pumas %>% select(PUMA = PUMACE10)) %>% 
+  st_as_sf()
+
+# top 10 most similar pumas to given one (Oakley/Brentwood, adjacent to Antioch), based on four years
+# map above
+leaflet() %>% 
+  addTiles() %>% 
+  addProviderTiles(providers$CartoDB.Positron) %>% 
+  addPolygons(
+    data = match[1, ],
+    color = "red",
+    label = ~PUMA
+  ) %>% 
+  addPolygons(
+    data = match[-1, ],
+    label = ~PUMA
+  )
+```
+
+BART Ridership for PUMA of interest and *AVERAGE of 10 simlar PUMAs from 2014 to 2019 (new Antioch station opened in 2018 marked by dashed line):
+
+```{r COMPARE OVER TIME}
+# seeing how similar..
+match_pumas <-
+  match %>% 
+  filter(!PUMA %in% c("01309")) %>% 
+  st_drop_geometry() %>% 
+  select(-match) %>% 
+  pivot_longer(      # pivot longer makes 'tidier'
+    -PUMA,
+    names_to = "year",
+    values_to = "bart"
+  ) %>%
+  group_by(
+    year
+  ) %>% 
+  summarize(
+    bart = mean(bart),
+    PUMA = "Similar PUMAs"
+  )
+
+treatment_pumas <-    # just taking first row of data
+  match %>% 
+  filter(PUMA %in% c("01309")) %>% 
+  select(-match) %>% 
+  st_drop_geometry() %>% 
+  pivot_longer(
+    -PUMA,
+    names_to = "year",
+    values_to = "bart"
+  )
+
+rbind(      # by fields, different orders don't matter
+  treatment_pumas,
+  match_pumas
+) %>% 
+  ggplot(
+    aes(
+      x = as.numeric(year),   # don't want as factor here
+      y = bart,
+      color = PUMA
+    )
+  ) +
+  geom_line() +
+  geom_vline(xintercept = 2018, linetype = "dashed") + # to put vertical line, just check units
+  labs(
+    title = "Oakley/Brentwood vs. control neighborhoods, BART ridership",
+    x = "Year",
+    y = "BART commute riders"
+  )
+```
+
+   It's important to remember here that the blue line above is an average of BART
+ridership values for 10 different counties that had similar (i.e. quite low)
+ridership to Oakley/Brentwood before the new 2018 Antioch station, and that 
+averaging likely flattens out more bumpy individual variations. With the red line,
+we see as expected (and presumably as hoped by urban planners and BART itself), a 
+significant jump in ridership for the adjacent PUMA to the new station. 
+   
+   Some key differences between this analysis and the one given in the textbook:
+   
+    - Here we had one extra year of 'pre new station' data and one less year of
+      'post new station' data. This perhaps added some strength in the matching
+      between our PUMA and its 'comparables' (to use as proxies for experimental            controls). Also, given only one year of post new station data, we don't have
+      much time in our data to see if the bump in ridership evened out, or better put,
+      whether ridership in the 'similar' PUMAs caught up with ridership nearby 
+      where the new station was put in.
+
+    - Also, it should be noted that the scale of the Y-axis in this analysis spans
+      about twice the ridership of that seen in the textbook graph. In fact the
+      change seen in the blue line (ridership for the 10 control PUMAs) is similar
+      in both analyses (and in fact going back to visually inspect the Leaflet
+      maps in each case reveals that most of these control PUMAs are the same 
+      in both cases with just a couple that differ). These PUMAs seem to be 
+      the Bay Area PUMAs with the absolute least amount of BART ridership, as two
+      PUMAs actually have 0 ridership for all 6 years considered, and a few other
+      PUMAs have 0 for most years here. Considering the focus PUMA now (Oakley/
+      Brentwood), our new graph shows a roughly similar proportional spike in
+      ridership (about 3x), but starting from a significantly higher amount (500
+      instead of 50). Interestingly, ridership also drops slightly in the year
+      immediately following the new station opening.
+
+    - It's important to reiterate some of the disclaimers explained in the text
+      book, like the face that larger datasets could be sought out in order to 
+      reduce noice (and increase statistical significance), that additional 
+      variables could have been used to match with our control PUMAs, that we 
+      could have chosen more or fewer than the arbitrary number of 10, that the 
+      geographical boundary chosen (our PUMA) might have better alternatives
+      (potentially smaller potentially larger), that our selection of years is
+      limited by PUMS data available, that we made assumptions about people 
+      answering the ACS survey in a certain way (to lead to reliable numbers
+      for BART ridership), and that other impacts of a new BART station could
+      have been evaluated and could be more significant in terms of social
+      impact and urban systems.
+   
+DiD Regression Summary:
+   
+```{r DiD REGRESSION}
+# then make Diff in Diff regression
+# time is just 0's and 1's
+transit_did <-
+  match %>% 
+  st_drop_geometry() %>% 
+  select(-match) %>% 
+  pivot_longer(
+    -PUMA,
+    names_to = "year",
+    values_to = "bart"
+  ) %>% 
+  mutate(
+    year = year %>% as.numeric(),
+    time = ifelse(year >= 2018, 1, 0),
+    treated = ifelse(PUMA == "01309", 1, 0)
+  )
+
+did_reg <- lm(bart ~ treated * time, data = transit_did)
+
+summary(did_reg)
+```
+
+Our DiD regression here shows a substantial effect on ridership of the new
+Antioch station with an increase of 1097 (riders) as compared to the controls.
+This figure is read from the 'treated:time' coefficient listed last in the
+summary (denoting the rate of change of the 'treated' group when controlling
+for the effect of time). Importantly, this coefficient is listed with very high 
+statistical significance (three ***'s for 99% confidence).
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
