@@ -38,9 +38,9 @@ acs_vars_2019_5yr <- readRDS("acs_vars_2019_5yr.rds")
 ```{r MAP: EISF}
 include_url("https://swehen17.shinyapps.io/HendricksonSwen_Project_DASHBOARD/?_ga=2.211101141.1564337814.1639522713-1483363889.1637271700")
 
-include_app("https://stanfordfuturebay.shinyapps.io/dashboard_demo2/", height = "400px")
+include_app("https://stanfordfuturebay.shinyapps.io/dashboard_demo2/", height = "800px")
 
-include_url("https://stanfordfuturebay.shinyapps.io/dashboard_demo2/", height = "400px")
+include_url("https://stanfordfuturebay.shinyapps.io/dashboard_demo2/", height = "1200px")
 
 bay_eng_int_map = readRDS("bay_eng_int_map.rds")
 beim_2013 = read_rds("beim_2013.rds")
