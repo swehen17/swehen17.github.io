@@ -1,0 +1,531 @@
+---
+title: "HendricksonSwen_Project_DATA-IN"
+author: "Swen Hendrickson"
+date: "12/12/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r 1. setup, include = F}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+
+# Clear all variables, close all plots, and clear the console, load libraries
+rm(list=ls())
+graphics.off()
+cat("\014")
+
+setwd("~/GitHub/swehen17.github.io/218X/Project")
+
+library(censusapi)
+library(tidyverse)
+library(tigris)
+library(sf)
+library(leaflet)
+library(mapview)
+library(plotly)
+library(data.table)
+library(viridis)
+library(hrbrthemes)
+library(janitor)
+
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+```
+
+Pasted in from v2:
+(methodology below)
+```{r EISF}
+residential_energy_intensity <- read_csv("usage_bld_btu.csv") %>%
+  filter(
+    usetype == "single_family",
+  ) %>%
+  select(
+    geo_id,
+    usetype,
+    year,
+    sqft,
+    usage,
+    name
+  )
+
+# only include census tracts, remove other geographical aggregations (cities, zips, etc.)
+residential_energy_intensity <- residential_energy_intensity[1:7920,]
+
+# sum(is.na(residential_energy_intensity$usage))
+# 459 NA values for usage
+
+# remove 'masked' values and create energy intensity calc
+residential_energy_intensity <- residential_energy_intensity %>%
+  filter(
+    usage != "masked"
+  ) %>%
+  mutate(
+    energy_intensity = as.numeric(usage) / sqft
+  )
+
+# map energy intensity
+#
+
+ca_tracts <- readRDS("ca_tracts.rds") %>%
+  st_transform(crs= 4326)
+
+# next steps: follow steps in A5
+
+res_eng_int_2017 <- residential_energy_intensity %>%
+  filter(year == 2017)
+
+# get just tracts in my energy dataset
+bay_tracts_need <- unique(residential_energy_intensity$name)
+
+saveRDS(bay_tracts_need, file = "bay_tracts_need.rds")
+
+bay_tracts_use_geo <- ca_tracts %>%
+  filter(GEOID %in% bay_tracts_need) %>%
+  select(GEOID, geometry) %>%
+  transmute(name = GEOID) %>%
+  st_transform(crs = 4326)
+
+saveRDS(bay_tracts_use_geo, "bay_tracts_use_geo.rds")
+
+bay_eng_int_map <- residential_energy_intensity %>%
+  left_join(bay_tracts_use_geo, by = "name") %>%
+  select(year, energy_intensity, geometry, name) %>%
+  st_as_sf() %>%
+  filter(energy_intensity != "Inf") %>%
+  st_transform(crs = 4326)
+
+saveRDS(bay_eng_int_map, "bay_eng_int_map.rds")
+
+beim_2013 <- bay_eng_int_map %>%
+  filter(year == 2013) %>%
+  st_transform(crs = 4326)
+
+saveRDS(beim_2013, "beim_2013.rds")
+
+# avg of 2013-2017
+beim_2013to2017_avgs <- as.data.frame(bay_eng_int_map) %>%
+  group_by(
+    name
+  ) %>%
+  summarise(
+    avg = sum(energy_intensity / 5)
+  ) %>% left_join(
+    bay_tracts_use_geo, by = "name"
+  ) %>%
+  st_as_sf()
+
+saveRDS(beim_2013to2017_avgs, file = "beim_2013to2017_avgs.rds")
+```
+Methodology of above chunk:
+	- Took in data (from Energy Atlas) which included utility energy consumption 
+	data for buildings of all types, aggregated by census tract
+	- Filtered for residential single-family homes (data included multi family, 
+	commercial, industrial, etc.)
+	- Divided total usage by built SF to get energy intensity
+	- mapped an individual year, then
+	- Took average of year 2013-2017
+  - Mapped by energy intensity (Btu/SF), darker blue being higher
+
+```{r ECPC}
+# now get energy consumption per capita (from the same data set [Energy Atlas])
+ECPC <- read_csv("usage_bld_btu.csv") %>%
+  select(usetype, year, sqft, usage_percap, name) %>%
+  filter(
+    usetype %in% c('res_total', 'single_family'),
+    name %in% unique(residential_energy_intensity$name)) %>%
+  mutate(
+    singfam_perc = sqft / shift(sqft, 1L, type = "lag"),
+    usage_percap = singfam_perc * shift(usage_percap, 1L, type = "lag")
+    ) %>%
+  filter(usetype == "single_family") %>%
+  select(year, usage_percap, name)
+
+saveRDS(ECPC, "ECPC.rds")
+
+ECPC_2013 <- ECPC %>% 
+  filter(year == 2013, usage_percap!= "masked") %>% 
+  transmute(
+    ecpc = usage_percap,
+    name = name
+  ) %>% 
+  left_join(bay_tracts_use_geo, by = "name") %>% 
+  st_as_sf()
+
+saveRDS(ECPC_2013, "ECPC_2013.rds")
+```
+Methodology of above:
+- only had population for total residential (includes mutli family, etc)
+- but had SF data for single family homes. got percentage that single family
+homes make up of total residential, to multiply by the usage per capita for
+total residential to get usage per capita for single family homes
+- helps to control for neighborhoods that might have different proportions 
+of homes vs. multifamily complexes, mobile homes, etc.
+
+```{r ECPH}
+# energy consumption per household
+ECPH <- read_csv("usage_bld_btu.csv") %>%
+  select(usetype, year, usage, name) %>%
+  filter(
+    usetype %in% c('res_total'),
+    name %in% unique(residential_energy_intensity$name))
+
+ECPH_2013 <- ECPH %>% 
+  filter(year == 2013, usage != "masked") %>% 
+  left_join(units_in_structure_2013, by = "name") %>% 
+  select( -c("usetype", "year")) %>% 
+  transmute(
+    ecph = (as.numeric(usage) * perc_1_unit) / (total_1_units),
+    name = name
+  ) %>% 
+  left_join(bay_tracts_use_geo, by = "name") %>% 
+  st_as_sf()
+    
+saveRDS(ECPH_2013, "ECPH_2013.rds")
+```
+
+```{r sociodem: INCOME}
+# ACS 5-year estimates for years 2013 - 2017
+income_2013 <-
+  read_csv("data/income/ACSDT5Y2013.B19001_data_with_overlays_2021-12-04T162248.csv") %>%
+  mutate(name = substr(GEO_ID, 10, 20)) %>%
+  select(-c(ends_with("M"), "NAME", "GEO_ID")) %>%
+  filter(name %in% unique(residential_energy_intensity$name)) %>%
+  transmute(
+    'total' = as.numeric(B19001_001E),
+    '5k' = as.numeric(B19001_002E),
+    '12.5k' = as.numeric(B19001_003E),
+    '17.5k' = as.numeric(B19001_004E),
+    '22.5k' = as.numeric(B19001_005E),
+    '27.5k' = as.numeric(B19001_006E),
+    '32.5k' = as.numeric(B19001_007E),
+    '37.5k' = as.numeric(B19001_008E),
+    '42.5k' = as.numeric(B19001_009E),
+    '47.5k' = as.numeric(B19001_010E),
+    '55k' = as.numeric(B19001_011E), # PATTERN STARTS CHANGING
+    '67.5k' = as.numeric(B19001_012E),
+    '87.5k' = as.numeric(B19001_013E),
+    '112.5k' = as.numeric(B19001_014E),
+    '137.5k' = as.numeric(B19001_015E),
+    '175k' = as.numeric(B19001_016E),
+    '250k' = as.numeric(B19001_017E), # $200k 'or 'more'. is there a better est for this?
+    name = name) %>%
+  mutate(
+    weighted_avg_income =
+      1000 * (`5k` * 5 +
+    `12.5k` * 12.5 +
+    `17.5k` * 17.5 +
+    `22.5k` * 22.5 +
+    `27.5k` * 27.5 +
+    `32.5k` * 32.5 +
+    `37.5k` * 37.5 +
+    `42.5k` * 42.5 +
+    `47.5k` * 47.5 +
+    `55k` * 55 +
+    `67.5k` * 67.5 +
+    `87.5k` * 87.5 +
+    `112.5k` * 112.5 +
+    `137.5k` * 137.5 +
+    `175k` * 175 +
+    `250k` * 250)
+    / total)
+
+saveRDS(income_2013, "income_2013.rds")
+
+##
+
+income_2014 <-
+  read_csv("data/income/ACSDT5Y2014.B19001_data_with_overlays_2021-12-04T162248.csv") %>%
+  mutate(name = substr(GEO_ID, 10, 20)) %>%
+  select(-c(ends_with("M"), "NAME", "GEO_ID", "B19001_001E")) %>%
+  filter(name %in% unique(residential_energy_intensity$name))
+
+income_2015 <-
+  read_csv("data/income/ACSDT5Y2015.B19001_data_with_overlays_2021-12-04T162248.csv") %>%
+  mutate(name = substr(GEO_ID, 10, 20)) %>%
+  select(-c(ends_with("M"), "NAME", "GEO_ID", "B19001_001E")) %>%
+  filter(name %in% unique(residential_energy_intensity$name))
+
+income_2016 <-
+  read_csv("data/income/ACSDT5Y2016.B19001_data_with_overlays_2021-12-04T162248.csv") %>%
+  mutate(name = substr(GEO_ID, 10, 20)) %>%
+  select(-c(ends_with("M"), "NAME", "GEO_ID", "B19001_001E")) %>%
+  filter(name %in% unique(residential_energy_intensity$name))
+
+income_2017 <-
+  read_csv("data/income/ACSDT5Y2017.B19001_data_with_overlays_2021-12-04T162248.csv") %>%
+  mutate(name = substr(GEO_ID, 10, 20)) %>%
+  select(-c(ends_with("M"), "NAME", "GEO_ID", "B19001_001E")) %>%
+  filter(name %in% unique(residential_energy_intensity$name))
+```
+
+```{r SELECTED HOUSING CHARACTERISTICS DATA}
+sel_house_chars_2013 <- read_csv(
+  "data/selected_housing_characteristics/ACSDP5Y2013.DP04_data_with_overlays_2021-12-12T194948.csv")
+
+    # 61, 65, 69, 73, 77, 81, 85, 89, 93, 97,   # year structure built
+    # 21, 25, 29,   # units in structure
+    # 173, 177, 181, 185, 189,   # housing tenure
+    # 193, 197, 201, 205, 209, 213, 217,   # year householder moved in
+    # 313, 317, 321, 325, 329, 333, 337, 341, 345, 349,   # Value
+    # 565   # GEO_ID
+
+##
+
+sel_house_chars_2014 <- read_csv(
+  "data/selected_housing_characteristics/ACSDP5Y2014.DP04_data_with_overlays_2021-12-12T194948.csv")
+
+sel_house_chars_2015 <- read_csv(
+  "data/selected_housing_characteristics/ACSDP5Y2015.DP04_data_with_overlays_2021-12-12T194948.csv")
+
+sel_house_chars_2016 <- read_csv(
+  "data/selected_housing_characteristics/ACSDP5Y2016.DP04_data_with_overlays_2021-12-12T194948.csv")
+
+sel_house_chars_2017 <- read_csv(
+  "data/selected_housing_characteristics/ACSDP5Y2017.DP04_data_with_overlays_2021-12-12T194948.csv")
+
+# bay_tracts_need <- readRDS("")
+
+# build and filter 2013, then make loop to put all years into one
+# can then filter more efficiently (fewer lines of code)
+
+# years <- 2013:2017
+# 
+# sel_house_chars <- NULL
+# 
+# for(year in years) {
+#   
+#       filename <-
+#         paste0(
+#           "data/selected_housing_characteristics/ACSDP5Y",
+#           year,
+#           ".DP04_data_with_overlays_2021-12-12T194948.csv"
+#         )
+# 
+#       print(filename)
+#       
+#       temp <- read_csv(filename)
+# 
+#       sel_house_chars <-
+#         rbind(sel_house_chars, temp)
+# }
+```
+
+```{r sociodem: TENURE}
+# Tenure (Own vs. Rent)
+housing_tenure_2013 <- sel_house_chars_2013 %>% 
+  select(173, 177, 181, 185, 189, 565) %>% 
+  row_to_names(row_number = 1) %>% 
+  transmute(
+    total_units = as.numeric(
+      `Estimate!!HOUSING TENURE!!Occupied housing units`),
+    owned_units = as.numeric(
+      `Estimate!!HOUSING TENURE!!Occupied housing units!!Owner-occupied`),
+    rented_units = as.numeric(
+      `Estimate!!HOUSING TENURE!!Occupied housing units!!Renter-occupied`),
+    avg_occ_owned_unit = as.numeric(
+      `Estimate!!HOUSING TENURE!!Average household size of owner-occupied unit`),
+    avg_occ_rented_unit = as.numeric(
+      `Estimate!!HOUSING TENURE!!Average household size of renter-occupied unit`),
+    name = substr(id, 10, 20)  
+  ) %>% 
+  transmute(
+    "owned_units" = owned_units,
+    "rented_units" = rented_units,
+    "own_occ" = owned_units * avg_occ_owned_unit,
+    "rent_occ" = rented_units * avg_occ_rented_unit,
+    name = name
+  ) %>% 
+  transmute(
+    owned_units_perc = owned_units / (owned_units + rented_units),
+    owned_occ_perc = own_occ / (own_occ + rent_occ),
+    name = name
+  ) %>% 
+  filter(
+    name %in% unique(residential_energy_intensity$name)
+    )
+
+saveRDS(housing_tenure_2013, file = "housing_tenure_2013.rds")
+```
+
+```{r sociodem: YEAR MOVED IN}
+# Number of Years Living in Home
+years_in_home_2013 <- sel_house_chars_2013 %>% 
+  select(193, 197, 201, 205, 209, 213, 217, 565) %>% 
+  row_to_names(row_number = 1) %>% 
+  transmute(
+    "total" = as.numeric(`Estimate!!YEAR HOUSEHOLDER MOVED INTO UNIT!!Occupied housing units`),
+    "5yrs" = as.numeric(`Estimate!!YEAR HOUSEHOLDER MOVED INTO UNIT!!Occupied housing units!!Moved in 2010 or later`),
+    "15yrs" = as.numeric(`Estimate!!YEAR HOUSEHOLDER MOVED INTO UNIT!!Occupied housing units!!Moved in 2000 to 2009`),
+    "25yrs" = as.numeric(`Estimate!!YEAR HOUSEHOLDER MOVED INTO UNIT!!Occupied housing units!!Moved in 1990 to 1999`),
+    "35yrs" = as.numeric(`Estimate!!YEAR HOUSEHOLDER MOVED INTO UNIT!!Occupied housing units!!Moved in 1980 to 1989`),
+    "45yrs" = as.numeric(`Estimate!!YEAR HOUSEHOLDER MOVED INTO UNIT!!Occupied housing units!!Moved in 1970 to 1979`),
+    "55yrs" = as.numeric(`Estimate!!YEAR HOUSEHOLDER MOVED INTO UNIT!!Occupied housing units!!Moved in 1969 or earlier`),
+    "name" = substr(id, 10, 20)
+  ) %>% 
+  filter(name %in% unique(residential_energy_intensity$name)) %>% 
+  mutate(
+    weighted_avg_years_in_home = (
+          `5yrs` * 5 +
+          `15yrs` * 15 +
+          `25yrs` * 25 +
+          `35yrs` * 35 +
+          `45yrs` * 45 +
+          `55yrs` * 55)
+          / total
+  ) %>% 
+  select(name, weighted_avg_years_in_home)
+
+saveRDS(years_in_home_2013, file = "years_in_home_2013.rds")
+```
+
+```{r sociodem: RACE}
+race_2010 <-
+  read_csv(
+    "data/race/DECENNIALSF12010.P8_data_with_overlays_2021-12-05T025058.csv")
+race_2010 <- race_2010[2:8058 , 1:10] %>%
+  mutate(name = substr(GEO_ID, 10, 20)) %>% select(-c(GEO_ID, P008002)) %>%
+  transmute(
+    'Total' = as.numeric(P008001),
+    'White' = as.numeric(P008003),
+    'Black' = as.numeric(P008004),
+    'Native_American' = as.numeric(P008005),
+    'Asian' = as.numeric(P008006),
+    'Pacific_Islander' = as.numeric(P008007),
+    'Other' = as.numeric(P008008),
+    'Multi-Racial' = as.numeric(P008009),
+    'name' = name
+  ) %>%
+  filter(name %in% unique(residential_energy_intensity$name))
+
+race_2010 <- race_2010 %>%
+  transmute(
+    'White' = White / Total,
+    'Black' = Black / Total,
+    'Native_American' = Native_American / Total,
+    'Asian' = Asian / Total,
+    'Pacific_Islander' = Pacific_Islander / Total,
+    'Other' = Other / Total,
+    'Multi-Racial' = `Multi-Racial` / Total,
+    'name' = name
+  ) %>% filter(!is.na(.))
+# this gives us census tracts with race breakdowns by percentage
+
+saveRDS(race_2010, file = "race_2010.rds")
+```
+
+```{r UNITS IN STRUCTURE}
+units_in_structure_2013 <- sel_house_chars_2013 %>% 
+  select(21, 25, 29, 565) %>% 
+  row_to_names(row_number = 1) %>% 
+  transmute(
+    "Total housing units" = as.numeric(`Estimate!!UNITS IN STRUCTURE!!Total housing units`),
+    "1-unit, detached" = as.numeric(`Estimate!!UNITS IN STRUCTURE!!Total housing units!!1-unit, detached`),
+    "1-unit, attached" = as.numeric(`Estimate!!UNITS IN STRUCTURE!!Total housing units!!1-unit, attached`),
+    name = substr(id, 10, 20)               
+  ) %>% 
+  transmute(
+    "total_1_units" = (`1-unit, detached` + `1-unit, attached`),
+    "perc_1_unit" = (`1-unit, detached` + `1-unit, attached`) / `Total housing units`,
+    name = name
+  )
+```
+
+```{r AVG HOUSE SIZE}
+avg_house_size_2013 <- units_in_structure_2013 %>% 
+  left_join(residential_energy_intensity, by = "name") %>% 
+  filter(
+    name %in% unique(residential_energy_intensity$name),
+    year == 2013) %>% 
+  select(sqft, total_1_units, name) %>% 
+  transmute(
+    avg_house_size = sqft / total_1_units,
+    name = name
+  ) 
+  # %>% 
+  # transmute(
+  #   avg_house_size = 
+  #     ifelse(
+  #       avg_house_size < 500 & avg_house_size > 10000,
+  #       "NA",
+  #       avg_house_size
+  #         ),
+  #   name = name
+  # )
+
+saveRDS(avg_house_size_2013, file = "avg_house_size_2013.rds")
+```
+
+
+```{r VALUE}
+VALUE_2013 <- sel_house_chars_2013 %>% 
+  select(313, 317, 321, 325, 329, 333, 337, 341, 345, 565) %>% 
+  row_to_names(row_number = 1) %>% 
+  transmute(
+    'total' = as.numeric(`Estimate!!VALUE!!Owner-occupied units`),
+    '25k' = as.numeric(`Estimate!!VALUE!!Owner-occupied units!!Less than $50,000`),
+    '75k' = as.numeric(`Estimate!!VALUE!!Owner-occupied units!!$50,000 to $99,999`),
+    '125k' = as.numeric(`Estimate!!VALUE!!Owner-occupied units!!$100,000 to $149,999`),
+    '175k' = as.numeric(`Estimate!!VALUE!!Owner-occupied units!!$150,000 to $199,999`),
+    '250k' = as.numeric(`Estimate!!VALUE!!Owner-occupied units!!$200,000 to $299,999`),
+    '400k' = as.numeric(`Estimate!!VALUE!!Owner-occupied units!!$300,000 to $499,999`),
+    '750k' = as.numeric(`Estimate!!VALUE!!Owner-occupied units!!$500,000 to $999,999`),
+    '1250k' = as.numeric(`Estimate!!VALUE!!Owner-occupied units!!$1,000,000 or more`),
+    name = substr(id, 10, 20)
+  ) %>% 
+  filter(name %in% unique(residential_energy_intensity$name)) %>% 
+  mutate(
+    weighted_avg_value =
+      1000 * 
+      (
+      `25k` * 25 +
+      `75k` * 75 +
+      `125k` * 125 +
+      `175k` * 175 +
+      `250k` * 250 +
+      `400k` * 400 +
+      `750k` * 750 +
+      `1250k` * 1250
+      ) / total
+  ) %>% 
+  select(name, weighted_avg_value)
+
+# note these are all owner-occupied units
+
+saveRDS(VALUE_2013, file = "VALUE_2013.rds")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

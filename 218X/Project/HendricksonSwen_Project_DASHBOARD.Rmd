@@ -1,0 +1,98 @@
+---
+title: "Dashboard Demo"
+runtime: shiny
+output: 
+  flexdashboard::flex_dashboard:
+    vertical_layout: fill
+---
+
+```{r global, include=FALSE}
+library(flexdashboard)
+library(tidyverse)
+library(leaflet)
+library(sf)
+library(plotly)
+
+setwd("~/GitHub/swehen17.github.io/218X/Project")
+
+# bring in data, and process if necessary
+bay_eng_int_map <- readRDS("bay_eng_int_map.rds")
+
+```
+
+Inputs {.sidebar}
+-------------------------------------
+
+```{r}
+checkboxGroupInput(
+  inputId = "year",
+  label = "Year(s):",
+  choices = c(2013, 2014, 2015, 2016, 2017),
+  selected = 2015
+)
+```
+
+Column
+-------------------------------------
+
+### EISF Map
+
+```{r}
+leafletOutput("map")
+```
+
+```{r, context = "server"}
+observeEvent({
+  input$year
+  }, {
+    beim_yearXXXX_MAP <- bay_eng_int_map %>%
+      filter(year == input$year) %>%
+      st_transform(crs = 4326)
+  
+    beim_pal <- colorNumeric(
+  palette = "Oranges",
+  domain = beim_yearXXXX_MAP$energy_intensity
+)
+
+  output$map <- renderLeaflet({
+    leaflet() %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addPolygons(
+    data = beim_yearXXXX_MAP,
+    fillColor = ~beim_pal(energy_intensity),
+    color = "white",
+    weight = 0.5,
+    fillOpacity = 0.5,
+    label = ~energy_intensity
+  )
+    
+    # TODO: figure out what is happening with year selection
+    # TODO: add averaging functionality
+    # TODO: add legend, units, label, title, ETC.
+    # reference HendricksonSwen_A9.Rmd for legends, etc.
+    
+  })
+  
+})
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+

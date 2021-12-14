@@ -59,6 +59,8 @@ bay_county_names <-
   )
 
 ca_tracts <- tracts("CA", cb = T, progress_bar = F)
+
+saveRDS(ca_tracts, file = "ca_tracts.rds")
 ```
 
 # PM2.5 Concentrations and Asthma Prevalency in the Bay Area
