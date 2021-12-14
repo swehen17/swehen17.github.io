@@ -11,9 +11,9 @@ editor_options:
 knitr::opts_chunk$set(echo = F, warning = F, message = F)
 
 # Clear all variables, close all plots, and clear the console, load libraries
-rm(list=ls())
-graphics.off()
-cat("\014")
+# rm(list=ls())
+# graphics.off()
+# cat("\014")
 
 setwd("~/GitHub/swehen17.github.io/218X/Project")
 
@@ -438,19 +438,18 @@ avg_house_size_2013 <- units_in_structure_2013 %>%
     year == 2013) %>% 
   select(sqft, total_1_units, name) %>% 
   transmute(
-    avg_house_size = sqft / total_1_units,
+    avg_house_size = as.numeric(sqft / total_1_units),
     name = name
-  ) 
-  # %>% 
-  # transmute(
-  #   avg_house_size = 
-  #     ifelse(
-  #       avg_house_size < 500 & avg_house_size > 10000,
-  #       "NA",
-  #       avg_house_size
-  #         ),
-  #   name = name
-  # )
+  ) %>%
+  transmute(
+    avg_house_size =
+      ifelse(
+        avg_house_size < 500 | avg_house_size > 10000,
+        1717,
+        avg_house_size
+      ),
+    name = name
+  )
 
 saveRDS(avg_house_size_2013, file = "avg_house_size_2013.rds")
 ```
