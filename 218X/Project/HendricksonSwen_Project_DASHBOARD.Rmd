@@ -17,18 +17,16 @@ setwd("~/GitHub/swehen17.github.io/218X/Project")
 
 # bring in data, and process if necessary
 bay_eng_int_map <- readRDS("bay_eng_int_map.rds")
-
 ```
 
 Inputs {.sidebar}
 -------------------------------------
 
 ```{r}
-checkboxGroupInput(
+selectInput(
   inputId = "year",
-  label = "Year(s):",
+  label = "Year:",
   choices = c(2013, 2014, 2015, 2016, 2017),
-  selected = 2015
 )
 ```
 

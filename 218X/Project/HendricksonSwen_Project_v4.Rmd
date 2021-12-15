@@ -1,0 +1,503 @@
+---
+title: "HendricksonSwen_Project"
+author: "Swen Hendrickson"
+date: "12/1/2021"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r 1. setup, include = F}
+knitr::opts_chunk$set(echo = F, warning = F, message = F)
+
+# Clear all variables, close all plots, and clear the console, load libraries
+# rm(list=ls())
+# graphics.off()
+# cat("\014")
+
+setwd("~/GitHub/swehen17.github.io/218X/Project")
+
+library(censusapi)
+library(tidyverse)
+library(tigris)
+library(sf)
+library(leaflet)
+library(mapview)
+library(plotly)
+library(data.table)
+library(viridis)
+library(hrbrthemes)
+library(knitr)
+library(flexdashboard)
+
+Sys.setenv(CENSUS_KEY="c8aa67e4086b4b5ce3a8717f59faa9a28f611dab")
+
+acs_vars_2019_5yr <- readRDS("acs_vars_2019_5yr.rds")
+```
+
+```{r MAP: EISF}
+include_url("https://swehen17.shinyapps.io/HendricksonSwen_Project_DASHBOARD/?_ga=2.211101141.1564337814.1639522713-1483363889.1637271700")
+
+include_app("https://stanfordfuturebay.shinyapps.io/dashboard_demo2/", height = "800px")
+
+include_url("https://stanfordfuturebay.shinyapps.io/dashboard_demo2/", height = "1200px")
+
+include_url("https://www.wikipedia.org/")
+
+#
+
+bay_eng_int_map = readRDS("bay_eng_int_map.rds")
+beim_2013 = read_rds("beim_2013.rds")
+
+# actually mapping, finally
+# 2013
+beim_pal <- colorNumeric(
+  palette = "Oranges",
+  domain = bay_eng_int_map$energy_intensity
+)
+
+leaflet() %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addPolygons(
+    data = beim_2013,
+    fillColor = ~beim_pal(energy_intensity),
+    color = "white",
+    weight = 0.5,
+    fillOpacity = 0.5,
+    label = ~energy_intensity
+  )
+```
+
+```{r MAP: ECPC}
+ECPC_2013 <- readRDS("ECPC_2013.rds")
+
+ECPC_pal <- colorNumeric(
+  palette = "Oranges",
+  domain = ECPC_2013$ecpc
+)
+
+leaflet() %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addPolygons(
+    data = ECPC_2013,
+    fillColor = ~ECPC_pal(ecpc),
+    color = "white",
+    weight = 0.5,
+    fillOpacity = 0.5,
+    label = ~ecpc
+  )
+```
+Methodology of above:
+- only had population for total residential (includes mutli family, etc)
+- but had SF data for single family homes. got percentage that single family
+homes make up of total residential, to multiply by the usage per capita for
+total residential to get usage per capita for single family homes
+- helps to control for neighborhoods that might have different proportions 
+of homes vs. multifamily complexes, mobile homes, etc MAP: ECPH.
+
+```{r MAP: ECPH}
+ECPH_2013 <- readRDS("ECPH_2013.rds")
+
+ECPH_pal <- colorNumeric(
+  palette = "Oranges",
+  domain = ECPH_2013$ecph
+)
+
+leaflet() %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addPolygons(
+    data = ECPH_2013,
+    fillColor = ~ECPH_pal(ecph),
+    color = "white",
+    weight = 0.5,
+    fillOpacity = 0.5,
+    label = ~ecph
+  )
+```
+
+
+
+```{r ANALYSIS: EISF vs. INCOME}
+bay_tracts_use_geo = readRDS("bay_tracts_use_geo.rds")
+
+avg_house_size_2013 = readRDS("avg_house_size_2013.rds")
+
+avg_house_size_2013_map <- avg_house_size_2013 %>% 
+  left_join(bay_tracts_use_geo, by = "name") %>% 
+  st_as_sf()
+
+# where are the tracts with very large houses?
+# top_10_house_size_tracts <- avg_house_size_2013_map %>% 
+#   filter(avg_house_size > 5755)
+# 
+# mapview(top_10_house_size_tracts)
+
+avg_house_size_2013_map_PAL <- colorNumeric(
+  palette = "Oranges",
+  domain = avg_house_size_2013_map$avg_house_size
+)
+
+leaflet() %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addPolygons(
+    data = avg_house_size_2013_map,
+    fillColor = ~avg_house_size_2013_map_PAL(avg_house_size),
+    color = "white",
+    weight = 0.5,
+    fillOpacity = 0.5,
+    label = ~avg_house_size
+  )
+
+# plot energy intensity by income
+# 2013
+income_2013 = readRDS("income_2013.rds")
+
+income_engint_2013 <- beim_2013 %>%
+  left_join(income_2013, by = "name") %>%
+  select(weighted_avg_income, energy_intensity, name) %>%
+  st_drop_geometry() %>% 
+  left_join(avg_house_size_2013, by = "name")
+
+ggplot(
+    data = income_engint_2013,
+    aes(
+      x = weighted_avg_income,
+      y = energy_intensity
+    )
+  ) +
+  geom_point(
+    aes(
+      color = avg_house_size
+    )
+  ) +
+  ggtitle("Energy Intensity vs. Income") +
+  xlab("Weighted Average Household Income (USD)") +
+  ylab("Energy Intensity (Btu/SF)") +
+  geom_smooth(method = "lm")
+
+# color code low EISF cluster
+cluster <- income_engint_2013 %>%
+  filter(energy_intensity < 25000)
+
+ggplot(
+    data = income_engint_2013,
+    aes(
+      x = weighted_avg_income,
+      y = energy_intensity
+    )
+  ) +
+  geom_point() +
+  ggtitle("Energy Intensity vs. Income") +
+  xlab("Weighted Average Household Income (USD)") +
+  ylab("Energy Intensity (Btu/SF)") +
+  # geom_smooth(method = "lm") +
+  geom_point(data = cluster, color = "purple")
+
+# TO UPDATE TITLE FORMATTING:
+# theme_update(plot.title = element_text(size = 22))
+# theme(plot.title = element_text(hjust = 0.5)) +
+#
+
+# as income goes up, energy intensity per SF goes down
+# cluster of low intensity bldgs
+# TODO: look into where these buildings are
+
+model <- lm(energy_intensity ~ weighted_avg_income, data = income_engint_2013)
+
+summary(model)
+
+# where are the super efficient tracts?
+efficient_tracts_2013 <- beim_2013 %>%
+  filter(energy_intensity < 25000)
+
+# map it
+beim_pal <- colorNumeric(
+  palette = "Green",
+  domain = efficient_tracts_2013$energy_intensity
+)
+
+leaflet() %>%
+  addProviderTiles(providers$CartoDB.Positron) %>%
+  addPolygons(
+    data = efficient_tracts_2013,
+    fillColor = ~beim_pal(energy_intensity),
+    color = "white",
+    weight = 0.5,
+    fillOpacity = 0.5,
+    label = ~energy_intensity
+  )
+# noticeably, big urban centers are missing (SF, Oak, San Jose)
+# mostly less populous tracts, but peninsula oddly well-represented
+# (Daly City, South San Francisco, San Mateo, San Mateo County)
+# theories: 
+# for less populated tracts: weather patterns, weekend homes, vacation homes (i.e. vacant more often)
+# for the peninsula: abundance of Silicon Valley workers who moved in relatively recently, have income, are educated on energy efficiency, and have built or upgraded homes recently
+
+# explore deeper
+# of the 150 low EISF tracts above, break into 3 groups, by EISF
+efficient_tracts_2013_tier1 <- efficient_tracts_2013 %>% 
+  filter(energy_intensity < 19351.275)
+mapview(efficient_tracts_2013_tier1)
+
+efficient_tracts_2013_tier2 <- efficient_tracts_2013 %>% 
+  filter(energy_intensity > 19351.275 & energy_intensity < 21552.34)
+mapview(efficient_tracts_2013_tier2)
+
+efficient_tracts_2013_tier3 <- efficient_tracts_2013 %>% 
+  filter(energy_intensity > 21552.34)
+mapview(efficient_tracts_2013_tier3)
+```
+
+```{r ANALYSIS: ECPC vs. INCOME}
+# plot ECPC by income
+ECPC = readRDS("ECPC.rds")
+
+# 2013
+income_ECPC_2013 <- ECPC %>%
+  filter(year == 2013, !is.na(usage_percap)) %>%
+  left_join(income_2013, by = "name") %>%
+  select(weighted_avg_income, usage_percap)
+
+ggplot(
+    data = income_ECPC_2013,
+    aes(
+      x = weighted_avg_income,
+      y = usage_percap
+    )
+  ) +
+  geom_point() +
+  ggtitle("Energy Consumption Per Capita vs. Income") +
+  xlab("Weighted Average Household Income (USD)") +
+  ylab("Energy Consumption Per Capita (Btu/Person)") +
+  geom_smooth(method = "lm")
+
+# as income goes up, consumption per capita increases steadily!
+
+model <- lm(usage_percap ~ weighted_avg_income, data = income_ECPC_2013)
+
+summary(model)
+```
+
+```{r ANALYSIS: ECPH & ECPC vs. TENURE}
+housing_tenure_2013 <- readRDS("housing_tenure_2013.rds")
+
+# ECPH vs. TENURE
+ECPH_vs_TENURE_2013 <- ECPH_2013 %>% 
+  left_join(housing_tenure_2013, by = "name") %>% 
+  st_drop_geometry() %>% 
+  select(c(ecph, owned_units_perc))
+
+ggplot(
+    data = ECPH_vs_TENURE_2013,
+    aes(
+      x = owned_units_perc,
+      y = ecph
+    )
+  ) +
+  geom_point() +
+  ggtitle("Energy Consumption Per Houseold vs. Percent of Units OWNED") +
+  xlab("Percentage of Units in Tract that are Owned") +
+  ylab("Average Energy Consumption Per Household (Btu/Unit)") +
+  geom_smooth(method = "lm")
+
+# seem to have a positive association between ownership and consumption
+
+model <- lm(ecph ~ owned_units_perc, data = ECPH_vs_TENURE_2013)
+
+summary(model)
+
+##
+
+ECPC_2013 <- readRDS("ECPC_2013.rds")
+
+# ECPC vs. TENURE
+ECPC_vs_TENURE_2013 <- ECPC_2013 %>% 
+  left_join(housing_tenure_2013, by = "name") %>% 
+  select(c(ecpc, owned_occ_perc))
+
+ggplot(
+    data = ECPC_vs_TENURE_2013,
+    aes(
+      x = owned_occ_perc,
+      y = ecpc
+    )
+  ) +
+  geom_point() +
+  ggtitle("Energy Consumption Per Capita vs. Percent of Occupants in OWNED units") +
+  xlab("Percentage of Occupants in Tract in Owned Units") +
+  ylab("Average Energy Consumption Per Capita (Btu/Person)") +
+  geom_smooth(method = "lm")
+
+# again, ownership seems to lead to more consumption
+
+model <- lm(ecpc ~ owned_occ_perc, data = ECPC_vs_TENURE_2013)
+
+summary(model)
+```
+The above (2) plots show that increased ownership is associated with increased consumption, both when measured per household and per occupant
+
+```{r ANALYSIS: EISF vs. TENURE}
+EISF_vs_TENURE_2013 <- beim_2013 %>% 
+  st_drop_geometry() %>% 
+  left_join(housing_tenure_2013, by = "name") %>% 
+  select(energy_intensity, owned_units_perc)
+
+ggplot(
+    data = EISF_vs_TENURE_2013,
+    aes(
+      x = owned_units_perc,
+      y = energy_intensity
+    )
+  ) +
+  geom_point() +
+  ggtitle("Energy Intensity vs. Ownership") +
+  xlab("Percentage of Units in Tract that are Owned") +
+  ylab("Energy Intensity for Homes in Tract (Btu/SF)") +
+  geom_smooth(method = "lm")
+
+# unclear or flat relationship between ownership and EISF
+
+model <- lm(energy_intensity ~ owned_units_perc, data = EISF_vs_TENURE_2013)
+
+summary(model)
+
+# slope almost flat, R^2 low (0.07)
+```
+
+```{r ANLYSIS: ECPH vs. VALUE}
+VALUE_2013 <- readRDS("VALUE_2013.rds")
+
+# consumption per household vs. home values (of owner-occupied units)
+ECPH_vs_VALUE_2013 <- ECPH_2013 %>% 
+  st_drop_geometry() %>% 
+  left_join(VALUE_2013, by = "name")
+
+ggplot(
+    data = ECPH_vs_VALUE_2013,
+    aes(
+      x = weighted_avg_value,
+      y = ecph
+    )
+  ) +
+  geom_point() +
+  ggtitle("Energy Consumption (per Household) vs. HOME VALUE") +
+  xlab("Weighted Average Home Value for Owner-Occupied Units in Tract") +
+  ylab("Average Energy Consumption (per Household) for Tract (Btu/unit)") +
+  geom_smooth(method = "lm")
+
+# seems to be positive but mild association bw home value and consumption
+
+model <- lm(ecph ~ weighted_avg_value, data = ECPH_vs_VALUE_2013)
+
+summary(model)
+
+# slope almost low, R^2 low (0.22)
+```
+
+```{r ANLYSIS: ECPH vs. YEARS IN HOME}
+years_in_home_2013 <- readRDS("years_in_home_2013.rds")
+
+ECPH_vs_YEARS_in_home_2013 <- ECPH_2013 %>% 
+  st_drop_geometry() %>% 
+  left_join(years_in_home_2013, by = "name") %>% 
+  select(ecph, weighted_avg_years_in_home)
+
+ggplot(
+    data = ECPH_vs_YEARS_in_home_2013,
+    aes(
+      x = weighted_avg_years_in_home,
+      y = ecph
+    )
+  ) +
+  geom_point() +
+  ggtitle("Energy Consumption (per Household) vs. YEARS Spent In Home") +
+  xlab("Weighted Average Number of Years Spent in Home") +
+  ylab("Average Energy Consumption (per Household) for Tract (Btu/unit)") +
+  geom_smooth(method = "lm")
+
+# implies that consumption is higher for residents who have lived in their homes for longer
+# likely influence (theory): that more efficient homes are occupied by people who have more recently moved into the Bay
+
+model <- lm(ecph ~ weighted_avg_years_in_home, data = ECPH_vs_YEARS_in_home_2013)
+
+summary(model)
+
+# R^2 (0.27)
+```
+
+
+
+
+# Equity Analysis
+   Equity analysis in this case is tricky, since consumption data from the utility (PG&E) was, for privacy reasons, aggregated to the census tract level as the smallest geographical granularity. This means that we can compare a few census tracts by their overall efficiency scores (EISF for single family homes) and their overall racial makeup, but we cannot say for certain which specific houses operate more or less efficiently and who exactly lives in those houses.
+  So, the tracts with both the highest and the lowest EISF scores (shown in the EISF maps) will be inspected for their racial make up to see if any trends are apparent.
+   
+```{r ANALYSIS: EQUITY ANALYSIS}
+# find best and worst tracts by EISF (using 2013-2017 avg)
+ # data: beim_2013to2013_avgs
+beim_2013to2017_avgs = readRDS("beim_2013to2017_avgs.rds")
+# then join with race_2010 by name to produce pie charts
+race_2010 = readRDS("race_2010.rds")
+
+# MOST energy efficient tract:
+lowest_EISF_tract_2013to2017 <- beim_2013to2017_avgs %>% 
+  filter(name == "06081613501") %>% 
+  left_join(race_2010, by = "name")
+# map
+mapview(lowest_EISF_tract_2013to2017)
+# join w/ race data
+data1 <- lowest_EISF_tract_2013to2017[ , 4:10] %>% st_drop_geometry()
+# plot
+data <- data.frame(
+  name = c(colnames(data1)) ,  
+  value = c(as.numeric(data1[1, ]))
+  )
+# ..
+ggplot(data, aes(x = name, y = value, fill = name)) + 
+  geom_bar(stat = "identity") +
+  ggtitle("Tract with LOWEST EISF") +
+  xlab("Race Category") +
+  ylab("Percentage of Population")
+
+
+# LEST efficient tract:
+highest_EISF_tract_2013to2017 <- beim_2013to2017_avgs %>% 
+  filter(name == "06013314104") %>% 
+  left_join(race_2010, by = "name")
+# map
+mapview(highest_EISF_tract_2013to2017)
+# join w/ race data
+data1 <- highest_EISF_tract_2013to2017[ , 4:10] %>% st_drop_geometry()
+# plot
+data <- data.frame(
+  name = c(colnames(data1)) ,  
+  value = c(as.numeric(data1[1, ]))
+  )
+# ..
+ggplot(data, aes(x = name, y = value, fill = name)) + 
+  geom_bar(stat = "identity") +
+  ggtitle("Tract with HIGHEST EISF") +
+  xlab("Race Category") +
+  ylab("Percentage of Population")
+
+# TODO: could also find Q1 and Q3 (circle back later)
+```
+
+  As we can see above..
+
+
+---
+
+Scrap Code Below:
+
+
+
+
+
+
+
+
+
+
+
+
