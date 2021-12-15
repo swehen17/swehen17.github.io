@@ -38,10 +38,10 @@ acs_vars_2019_5yr <- readRDS("acs_vars_2019_5yr.rds")
 # Introduction
 
 ## Abstract
-The driving question behind this project is "WHERE are energy efficient homes in the Bay Area and WHO benefits from occupying them?" Behind this question is a foundational understanding that occupying an energy efficient home has financial benefits. The most obvious advantage is that utility bills are lower than they otherwise would be, resulting in cost savings that accumulate over time. It has also been documented that energy efficient homes earn a greater resale value (LINK?). Achieving energy efficiency, however, costs money, either through retrofits of an old home or brand new construction (which is increasingly rare in the highly developed Bay Area). Due to this barrier to entry, it would logically follow that residential energy efficiency is one of the countless mechanisms in our society that perpetuates economic disparity. The following analysis seeks to view this issue from a number of angles, picking it apart with statistical analyses and placing on the map what the energy consumption landscape looks like in the Bay Area. 
+The driving question behind this project is "WHERE are energy efficient homes in the Bay Area and WHO benefits from occupying them?" Behind this question is a foundational understanding that occupying an energy efficient home has financial benefits. The most obvious advantage is that utility bills are lower than they otherwise would be, resulting in cost savings that accumulate over time. It has also been documented that energy efficient homes earn a greater resale value. Achieving energy efficiency, however, costs money, either through retrofits of an old home or brand new construction (which is increasingly rare in the highly developed Bay Area). Due to this barrier to entry, it would logically follow that residential energy efficiency is one of the countless mechanisms in our society that perpetuates economic disparity. The following analysis seeks to view this issue from a number of angles, picking it apart with statistical analyses and placing on the map what the energy consumption landscape looks like in the Bay Area. 
 
 ## Data
-Energy consumption data comes from aggregated PG&E data, via another data project called "The Bay Area Energy Atlas" from the organization BayREN (LINK?). The data file I used included a combined annual electricity and natural gas usage figure for each year from 2013 to 2017, aggregated to the Census Tract level but split into categories of building type (residential, industrial, etc.). For my analysis, I primarily used the residential sub-category: single-family homes. In addition to the combined usage figure, numbers on population and 'built square feet' for each building type allowed for calculation of varying consumption metrics (detailed below). 
+Energy consumption data comes from aggregated PG&E data, via another data project called "The Bay Area Energy Atlas" from the organization BayREN. The data file I used included a combined annual electricity and natural gas usage figure for each year from 2013 to 2017, aggregated to the Census Tract level but split into categories of building type (residential, industrial, etc.). For my analysis, I primarily used the residential sub-category: single-family homes. In addition to the combined usage figure, numbers on population and 'built square feet' for each building type allowed for calculation of varying consumption metrics (detailed below). 
 
 Socio-demographic and housing characteristics data for cross-analysis was mostly brought in from ACS 5-year estimate surveys, which allowed for selection of individual years in order to match the time frame of the PG&E data. In the case of race (used for equity analysis) data came from the 2010 census. 
 
@@ -393,7 +393,7 @@ ggplot(
 
 model <- lm(ecph ~ owned_units_perc, data = ECPH_vs_TENURE_2013)
 
-summary(model)
+# summary(model)
 
 ##
 
@@ -421,7 +421,7 @@ ggplot(
 
 model <- lm(ecpc ~ owned_occ_perc, data = ECPC_vs_TENURE_2013)
 
-summary(model)
+# summary(model)
 ```
 The above (2) plots show that increased ownership is associated with increased consumption, both when measured per household and per occupant
 
@@ -448,7 +448,7 @@ ggplot(
 
 model <- lm(energy_intensity ~ owned_units_perc, data = EISF_vs_TENURE_2013)
 
-summary(model)
+# summary(model)
 
 # slope almost flat, R^2 low (0.07)
 ```
@@ -479,7 +479,7 @@ ggplot(
 
 model <- lm(ecph ~ weighted_avg_years_in_home, data = ECPH_vs_YEARS_in_home_2013)
 
-summary(model)
+# summary(model)
 
 # R^2 (0.27)
 ```
@@ -509,7 +509,7 @@ ggplot(
 
 model <- lm(ecph ~ weighted_avg_value, data = ECPH_vs_VALUE_2013)
 
-summary(model)
+# summary(model)
 
 # slope almost low, R^2 low (0.22)
 ```
